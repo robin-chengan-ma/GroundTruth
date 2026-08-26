@@ -24,4 +24,5 @@ updated: 2026-08-26
 
 | 日期 | 版本 / commit | 異動摘要 | 開發者 |
 | --- | --- | --- | --- |
+| 2026-08-26 | 0fc63ae | Phase 1：Django 專案初始化、DB Schema、seed 假資料、完整 CRUD API（commit，尚未 push） | Claude |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
