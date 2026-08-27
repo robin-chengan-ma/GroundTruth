@@ -52,8 +52,10 @@ updated: 2026-08-27
 
 | 日期 | 版本 / commit | 異動摘要 | 開發者 |
 | --- | --- | --- | --- |
-| 2026-08-26 | 0fc63ae | Phase 1：Django 專案初始化、DB Schema、seed 假資料、完整 CRUD API（commit，尚未 push） | Claude |
-| 2026-08-27 | e5ece91 | Phase 2：n8n 環境架設、內部 API Key 認證、詢價試算主流程閉環（commit，尚未 push） | Claude |
-| 2026-08-27 | d94e932 | fix：Gemini 模型過期改用 gemini-3.6-flash，真實端到端驗證通過（commit，尚未 push） | Claude |
-| 2026-08-27 | 933c7c4 | Phase 3：供應商模糊比對案件核准後的 n8n 續傳串接、FR-2b 格式錯誤分流（commit，尚未 push） | Claude |
+| 2026-08-26 | 0fc63ae | Phase 1：Django 專案初始化、DB Schema、seed 假資料、完整 CRUD API（已 push） | Claude |
+| 2026-08-27 | e5ece91 | Phase 2：n8n 環境架設、內部 API Key 認證、詢價試算主流程閉環（已 push） | Claude |
+| 2026-08-27 | d94e932 | fix：Gemini 模型過期改用 gemini-3.6-flash，真實端到端驗證通過（已 push） | Claude |
+| 2026-08-27 | 933c7c4 | Phase 3：供應商模糊比對案件核准後的 n8n 續傳串接、FR-2b 格式錯誤分流（已 push） | Claude |
+| 2026-08-27 | d9898e2 | docs：補上 933c7c4 推版紀錄（已 push） | Robin |
+| 2026-08-27 | d4fa4b2 | fix：修正 n8n Mask 遮罩節點未轉傳 user_id 導致續傳流程試算報價失敗（commit，尚未 push） | Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
