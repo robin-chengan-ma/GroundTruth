@@ -1,6 +1,6 @@
 {
-  "id": "groundtruth-inquiry-flow-phase2",
-  "name": "GroundTruth - 詢價主流程（Phase 2：不含遮罩/幻覺驗證）",
+  "id": "groundtruth-inquiry-flow-phase3",
+  "name": "GroundTruth - 詢價主流程（Phase 3：含遮罩／幻覺驗證）",
   "nodes": [
     {
       "parameters": {
@@ -13,8 +13,136 @@
       "name": "Webhook 接收詢價",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [-200, 0],
+      "position": [
+        -680,
+        0
+      ],
       "webhookId": "inquiry"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/masking/mask/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ raw_text: $json.body.raw_text }) }}",
+        "options": {}
+      },
+      "id": "http-mask",
+      "name": "Mask 遮罩",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-masked",
+              "leftValue": "={{$json.outcome}}",
+              "rightValue": "masked",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-masked",
+      "name": "IF：遮罩成功？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-fuzzy",
+              "leftValue": "={{$json.outcome}}",
+              "rightValue": "supplier_fuzzy_match",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-fuzzy",
+      "name": "IF：供應商模糊比對？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { detail: '查無供應商，請確認名稱或先建檔' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-supplier-not-found",
+      "name": "回覆：查無供應商",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        40,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { detail: '供應商身分待人工複核確認，請稍候', review_id: $json.review_id, candidates: $json.candidates } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-supplier-fuzzy",
+      "name": "回覆：供應商待複核",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        40,
+        160
+      ]
     },
     {
       "parameters": {
@@ -22,36 +150,121 @@
         "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是採購詢價解析器。將以下自然語言詢價文字解析成 JSON，只回傳 JSON，不要其他文字，格式為 {\"item\": string, \"quantity\": number, \"supplier\": string, \"currency\": string}（幣別預設 TWD）：\\n\\n${$json.body.raw_text}` }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是採購詢價解析器。以下文字中的供應商名稱與金額已被 Token 化遮罩（例如 SUP_001），請原樣保留這些 Token、不要嘗試還原或修改。將文字解析成 JSON，只回傳 JSON，不要其他文字，格式為 {\\\"item\\\": string, \\\"quantity\\\": number, \\\"supplier\\\": string, \\\"currency\\\": string}（supplier 欄位填入文字中出現的 Token 原文；幣別預設 TWD）：\\n\\n${$json.masked_text}` }] }] }) }}",
         "options": {}
       },
       "id": "http-gemini-parse",
       "name": "Gemini 解析詢價",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [40, 0]
+      "position": [
+        40,
+        -160
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// 從 Gemini 回應中取出文字，解析成結構化物件。\n// LLM 有時會用 ```json ... ``` 包住，這裡先去掉再 parse。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nconst cleaned = text.replace(/```json|```/g, '').trim();\nconst parsed = JSON.parse(cleaned);\n\nreturn [{\n  json: {\n    item: parsed.item,\n    quantity: parsed.quantity,\n    supplier: parsed.supplier,\n    currency: parsed.currency || 'TWD',\n  }\n}];"
+        "jsCode": "// 從 Gemini 回應中取出文字，解析成結構化物件。\n// LLM 有時會用 ```json ... ``` 包住，這裡先去掉再 parse。\n// FR-2b 第三種情境：供應商比對成功但其他欄位（如金額/數量）格式無法解析——\n// 不 throw、不進複核佇列，改用 parse_error 旗標讓下一個 IF 節點分流成即時回覆。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const cleaned = text.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { parse_error: true } }];\n}\n\nconst quantity = Number(parsed.quantity);\nif (!parsed.item || !parsed.supplier || !Number.isFinite(quantity) || quantity <= 0) {\n  return [{ json: { parse_error: true } }];\n}\n\nreturn [{\n  json: {\n    parse_error: false,\n    item: parsed.item,\n    quantity: quantity,\n    supplier_token: parsed.supplier,\n    currency: parsed.currency || 'TWD',\n  }\n}];"
       },
       "id": "code-parse-llm-output",
       "name": "解析 LLM 輸出",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [280, 0]
+      "position": [
+        280,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-parse-ok",
+              "leftValue": "={{$json.parse_error}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-parse-ok",
+      "name": "IF：解析格式正確？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        400,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { detail: '詢價內容格式無法解析，請確認數量/金額等欄位後重新輸入' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-parse-error",
+      "name": "回覆：格式錯誤",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        400,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/masking/unmask/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ masked_text: $json.supplier_token, mapping: $('Mask 遮罩').item.json.mapping }) }}",
+        "options": {}
+      },
+      "id": "http-unmask-supplier",
+      "name": "Unmask 供應商",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        -160
+      ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/suppliers/?search={{encodeURIComponent($json.supplier)}}",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/suppliers/?search={{encodeURIComponent($json.text)}}",
         "options": {}
       },
       "id": "http-lookup-supplier",
       "name": "查詢供應商",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 0]
+      "position": [
+        760,
+        -160
+      ]
     },
     {
       "parameters": {
@@ -63,17 +276,23 @@
       "name": "查詢產品",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [760, 0]
+      "position": [
+        1000,
+        -160
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// 依序整合：LLM 解析結果 + 供應商查詢 + 產品查詢（線性串接，不用平行分支，避免 merge 時序問題）。\nconst parsed = $('解析 LLM 輸出').first().json;\nconst supplierResult = $('查詢供應商').first().json.results?.[0];\nconst productResult = $input.first().json.results?.[0];\n\nif (!supplierResult) {\n  throw new Error(`查無供應商：${parsed.supplier}`);\n}\nif (!productResult) {\n  throw new Error(`查無產品：${parsed.item}`);\n}\n\nreturn [{\n  json: {\n    product_id: productResult.id,\n    supplier_id: supplierResult.id,\n    quantity: parsed.quantity,\n  }\n}];"
+        "jsCode": "// 整合：LLM 解析結果 + 供應商查詢 + 產品查詢 + 詢價發起人 user_id。\nconst parsed = $('解析 LLM 輸出').first().json;\nconst supplierResult = $('查詢供應商').first().json.results?.[0];\nconst productResult = $input.first().json.results?.[0];\nconst userId = $('Webhook 接收詢價').first().json.body.user_id;\n\nif (!supplierResult) {\n  throw new Error(`查無供應商：${$('Unmask 供應商').first().json.text}`);\n}\nif (!productResult) {\n  throw new Error(`查無產品：${parsed.item}`);\n}\n\nreturn [{\n  json: {\n    user_id: userId,\n    product_id: productResult.id,\n    product_name: productResult.name,\n    supplier_id: supplierResult.id,\n    supplier_name: supplierResult.name,\n    quantity: parsed.quantity,\n  }\n}];"
       },
       "id": "code-merge-lookup",
       "name": "整合查詢結果",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 0]
+      "position": [
+        1240,
+        -160
+      ]
     },
     {
       "parameters": {
@@ -90,49 +309,822 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json) }}",
+        "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, product_id: $json.product_id, supplier_id: $json.supplier_id, quantity: $json.quantity }) }}",
         "options": {}
       },
       "id": "http-calculate-quote",
-      "name": "Django 試算報價",
+      "name": "Django 試算報價（建立 Quote）",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1240, 0]
+      "position": [
+        1480,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是報價摘要生成器。請依以下真實資料，生成一段簡短的中文報價摘要文字，只回傳摘要文字本身，不要其他說明。所有數字一律使用阿拉伯數字，可用千分位逗號分隔（例如 30,000），絕對不要使用中文數字（例如「三萬」）。\\n\\n供應商：${$('整合查詢結果').first().json.supplier_name}\\n產品：${$('整合查詢結果').first().json.product_name}\\n數量：${$json.quantity}\\n單價：${$json.unit_price}\\n總金額：${$json.total_amount} ${$json.currency}` }] }] }) }}",
+        "options": {}
+      },
+      "id": "http-gemini-summary",
+      "name": "Gemini 生成摘要",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1720,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 從 Gemini 回應中取出摘要文字（可能被 ``` 包住）。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nconst cleaned = text.replace(/```/g, '').trim();\n\nreturn [{\n  json: {\n    quote_id: $('Django 試算報價（建立 Quote）').first().json.quote_id,\n    summary_text: cleaned,\n  }\n}];"
+      },
+      "id": "code-parse-summary",
+      "name": "解析摘要文字",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/quotes/verify-hallucination/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ quote_id: $json.quote_id, summary_text: $json.summary_text }) }}",
+        "options": {}
+      },
+      "id": "http-verify-hallucination",
+      "name": "幻覺驗證",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-passed",
+              "leftValue": "={{$json.passed}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-passed",
+      "name": "IF：幻覺驗證通過？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        -160
+      ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "responseBody": "={{ { quote_id: $('解析摘要文字').first().json.quote_id, summary_text: $('解析摘要文字').first().json.summary_text, unit_price: $('Django 試算報價（建立 Quote）').first().json.unit_price, total_amount: $('Django 試算報價（建立 Quote）').first().json.total_amount, currency: $('Django 試算報價（建立 Quote）').first().json.currency, price_deviation_pct: $('Django 試算報價（建立 Quote）').first().json.price_deviation_pct, price_deviation_flag: $('Django 試算報價（建立 Quote）').first().json.price_deviation_flag } }}",
+        "options": {
+          "responseCode": 200
+        }
       },
-      "id": "respond-webhook",
-      "name": "回傳結果",
+      "id": "respond-success",
+      "name": "回覆：成功",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1480, 0]
+      "position": [
+        2680,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { detail: '報價摘要與真實資料不一致，已建立複核案件，待管理員確認', review_id: $json.review_id, reasons: $json.reasons } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-hallucination-review",
+      "name": "回覆：摘要待複核",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inquiry/resume",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-inquiry-resume",
+      "name": "Webhook 續傳詢價",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        480
+      ],
+      "webhookId": "inquiry-resume"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/masking/mask-amounts-only/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ raw_text: $json.body.raw_input_text }) }}",
+        "options": {}
+      },
+      "id": "http-mask-amounts-resume",
+      "name": "Mask 金額遮罩（續傳）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -440,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是採購詢價解析器。以下文字中的金額已被 Token 化遮罩（例如 AMOUNT_001），請原樣保留這些 Token。將文字解析成 JSON，只回傳 JSON，不要其他文字，格式為 {\\\"item\\\": string, \\\"quantity\\\": number, \\\"currency\\\": string}（幣別預設 TWD）：\\n\\n${$json.masked_text}` }] }] }) }}",
+        "options": {}
+      },
+      "id": "http-gemini-parse-resume",
+      "name": "Gemini 解析詢價（續傳）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -200,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// FR-2b 第三種情境：格式無法解析時不 throw，交給下一個 IF 節點分流即時回覆。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const cleaned = text.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { parse_error: true } }];\n}\n\nconst quantity = Number(parsed.quantity);\nif (!parsed.item || !Number.isFinite(quantity) || quantity <= 0) {\n  return [{ json: { parse_error: true } }];\n}\n\nreturn [{\n  json: {\n    parse_error: false,\n    item: parsed.item,\n    quantity: quantity,\n    currency: parsed.currency || 'TWD',\n  }\n}];"
+      },
+      "id": "code-parse-llm-output-resume",
+      "name": "解析 LLM 輸出（續傳）",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        40,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-parse-ok-resume",
+              "leftValue": "={{$json.parse_error}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-parse-ok-resume",
+      "name": "IF：解析格式正確？（續傳）",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        160,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { detail: '詢價內容格式無法解析，請確認數量/金額等欄位後重新輸入' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-parse-error-resume",
+      "name": "回覆：格式錯誤（續傳）",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        160,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/products/?search={{encodeURIComponent($('解析 LLM 輸出（續傳）').first().json.item)}}",
+        "options": {}
+      },
+      "id": "http-lookup-product-resume",
+      "name": "查詢產品（續傳）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/suppliers/{{$('Webhook 續傳詢價').first().json.body.supplier_id}}/",
+        "options": {}
+      },
+      "id": "http-lookup-supplier-resume",
+      "name": "查詢供應商名稱（續傳）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        280,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// webhook body 已經帶 user_id、supplier_id（人工複核核准時確認的）；\n// 只有 product 需要查、quantity 需要 LLM 解析。\nconst webhookBody = $('Webhook 續傳詢價').first().json.body;\nconst parsed = $('解析 LLM 輸出（續傳）').first().json;\nconst productResult = $('查詢產品（續傳）').first().json.results?.[0];\n\nif (!productResult) {\n  throw new Error(`查無產品：${parsed.item}`);\n}\n\nreturn [{\n  json: {\n    user_id: webhookBody.user_id,\n    product_id: productResult.id,\n    product_name: productResult.name,\n    supplier_id: webhookBody.supplier_id,\n    quantity: parsed.quantity,\n  }\n}];"
+      },
+      "id": "code-merge-lookup-resume",
+      "name": "整合查詢結果（續傳）",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/quotes/calculate/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ user_id: $json.user_id, product_id: $json.product_id, supplier_id: $json.supplier_id, quantity: $json.quantity }) }}",
+        "options": {}
+      },
+      "id": "http-calculate-quote-resume",
+      "name": "Django 試算報價（建立 Quote，續傳）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是報價摘要生成器。請依以下真實資料，生成一段簡短的中文報價摘要文字，只回傳摘要文字本身，不要其他說明。所有數字一律使用阿拉伯數字，可用千分位逗號分隔（例如 30,000），絕對不要使用中文數字（例如「三萬」）。\\n\\n供應商：${$('查詢供應商名稱（續傳）').first().json.name}\\n產品：${$('整合查詢結果（續傳）').first().json.product_name}\\n數量：${$json.quantity}\\n單價：${$json.unit_price}\\n總金額：${$json.total_amount} ${$json.currency}` }] }] }) }}",
+        "options": {}
+      },
+      "id": "http-gemini-summary-resume",
+      "name": "Gemini 生成摘要（續傳）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $input.first().json.candidates[0].content.parts[0].text;\nconst cleaned = text.replace(/```/g, '').trim();\n\nreturn [{\n  json: {\n    quote_id: $('Django 試算報價（建立 Quote，續傳）').first().json.quote_id,\n    summary_text: cleaned,\n  }\n}];"
+      },
+      "id": "code-parse-summary-resume",
+      "name": "解析摘要文字（續傳）",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/quotes/verify-hallucination/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ quote_id: $json.quote_id, summary_text: $json.summary_text }) }}",
+        "options": {}
+      },
+      "id": "http-verify-hallucination-resume",
+      "name": "幻覺驗證（續傳）",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1480,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-passed-resume",
+              "leftValue": "={{$json.passed}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-passed-resume",
+      "name": "IF：幻覺驗證通過？（續傳）",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { quote_id: $('解析摘要文字（續傳）').first().json.quote_id, summary_text: $('解析摘要文字（續傳）').first().json.summary_text, unit_price: $('Django 試算報價（建立 Quote，續傳）').first().json.unit_price, total_amount: $('Django 試算報價（建立 Quote，續傳）').first().json.total_amount, currency: $('Django 試算報價（建立 Quote，續傳）').first().json.currency, price_deviation_pct: $('Django 試算報價（建立 Quote，續傳）').first().json.price_deviation_pct, price_deviation_flag: $('Django 試算報價（建立 Quote，續傳）').first().json.price_deviation_flag } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success-resume",
+      "name": "回覆：成功（續傳）",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1960,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { detail: '報價摘要與真實資料不一致，已建立複核案件，待管理員確認', review_id: $json.review_id, reasons: $json.reasons } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-hallucination-review-resume",
+      "name": "回覆：摘要待複核（續傳）",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1960,
+        620
+      ]
     }
   ],
   "connections": {
     "Webhook 接收詢價": {
-      "main": [[{ "node": "Gemini 解析詢價", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Mask 遮罩",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mask 遮罩": {
+      "main": [
+        [
+          {
+            "node": "IF：遮罩成功？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：遮罩成功？": {
+      "main": [
+        [
+          {
+            "node": "Gemini 解析詢價",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF：供應商模糊比對？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：供應商模糊比對？": {
+      "main": [
+        [
+          {
+            "node": "回覆：供應商待複核",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆：查無供應商",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Gemini 解析詢價": {
-      "main": [[{ "node": "解析 LLM 輸出", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "解析 LLM 輸出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "解析 LLM 輸出": {
-      "main": [[{ "node": "查詢供應商", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF：解析格式正確？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：解析格式正確？": {
+      "main": [
+        [
+          {
+            "node": "Unmask 供應商",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆：格式錯誤",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unmask 供應商": {
+      "main": [
+        [
+          {
+            "node": "查詢供應商",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "查詢供應商": {
-      "main": [[{ "node": "查詢產品", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "查詢產品",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "查詢產品": {
-      "main": [[{ "node": "整合查詢結果", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "整合查詢結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "整合查詢結果": {
-      "main": [[{ "node": "Django 試算報價", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Django 試算報價（建立 Quote）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "Django 試算報價": {
-      "main": [[{ "node": "回傳結果", "type": "main", "index": 0 }]]
+    "Django 試算報價（建立 Quote）": {
+      "main": [
+        [
+          {
+            "node": "Gemini 生成摘要",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 生成摘要": {
+      "main": [
+        [
+          {
+            "node": "解析摘要文字",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析摘要文字": {
+      "main": [
+        [
+          {
+            "node": "幻覺驗證",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "幻覺驗證": {
+      "main": [
+        [
+          {
+            "node": "IF：幻覺驗證通過？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：幻覺驗證通過？": {
+      "main": [
+        [
+          {
+            "node": "回覆：成功",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆：摘要待複核",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook 續傳詢價": {
+      "main": [
+        [
+          {
+            "node": "Mask 金額遮罩（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mask 金額遮罩（續傳）": {
+      "main": [
+        [
+          {
+            "node": "Gemini 解析詢價（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 解析詢價（續傳）": {
+      "main": [
+        [
+          {
+            "node": "解析 LLM 輸出（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析 LLM 輸出（續傳）": {
+      "main": [
+        [
+          {
+            "node": "IF：解析格式正確？（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：解析格式正確？（續傳）": {
+      "main": [
+        [
+          {
+            "node": "查詢供應商名稱（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆：格式錯誤（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查詢供應商名稱（續傳）": {
+      "main": [
+        [
+          {
+            "node": "查詢產品（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "查詢產品（續傳）": {
+      "main": [
+        [
+          {
+            "node": "整合查詢結果（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "整合查詢結果（續傳）": {
+      "main": [
+        [
+          {
+            "node": "Django 試算報價（建立 Quote，續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Django 試算報價（建立 Quote，續傳）": {
+      "main": [
+        [
+          {
+            "node": "Gemini 生成摘要（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 生成摘要（續傳）": {
+      "main": [
+        [
+          {
+            "node": "解析摘要文字（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析摘要文字（續傳）": {
+      "main": [
+        [
+          {
+            "node": "幻覺驗證（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "幻覺驗證（續傳）": {
+      "main": [
+        [
+          {
+            "node": "IF：幻覺驗證通過？（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：幻覺驗證通過？（續傳）": {
+      "main": [
+        [
+          {
+            "node": "回覆：成功（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆：摘要待複核（續傳）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   }
 }

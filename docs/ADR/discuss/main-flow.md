@@ -157,3 +157,47 @@
 - `docs/specs/SPEC.md` FR-7a、FR-8 改寫，新增 FR-8a，FR-9 補上「需先認領」；例外處理與邊界條件表新增對應列。
 - `docs/reference/db_schema.md` 的 `approvals` 表新增 `role_id`（FK → roles.id），`approver_id` 改為 nullable。
 - Django service 的簽核路由邏輯與 Vue 簽核佇列頁面的認領 UI 屬於實作階段任務，記入 PROGRESS.md 追蹤。
+
+## 2026-08-27 [標籤：AI] 修正：manual_review_queue.quote_id 改為 nullable
+
+**狀態**：accepted
+
+**背景**：Phase 3 開工前重讀文件，發現 `docs/reference/db_schema.md` 把 `manual_review_queue.quote_id` 標記為 NOT NULL，但這跟本檔前一則「修正：供應商模糊比對案件核准後的接回方式」的定案互相矛盾——該決策確立 `supplier_fuzzy_match` 案件是在 Mask 節點階段（LLM 尚未解析出 product/quantity/currency，`quotes` 表其餘欄位皆 NOT NULL）就建立複核紀錄，此時根本不可能有 Quote 資料列可供 `quote_id` 指向。
+
+**討論內容**：兩個方案——(a) 讓 `quote_id` 允許 null，`supplier_fuzzy_match` 案件靠既有的 `raw_input_text` 欄位保留原始輸入；(b) 改變流程，讓 Mask 節點先建立一筆不完整的 Quote 再指向它。(b) 會讓 `quotes` 表出現大量欄位缺值的暫存列，污染「已核准歷史均價」等查詢邏輯，且違反 `quotes` 表欄位設計的本意；(a) 只是欄位屬性調整，不影響其他設計，且 `raw_input_text` 欄位本來就是為這個案件類型準備的。採用 (a)。
+
+**決策**：
+1. `manual_review_queue.quote_id` 改為 nullable：`supplier_fuzzy_match` 案件 `quote_id` 為 null，靠 `raw_input_text` 保留原始輸入；`hallucination_mismatch` 案件（此時 Quote 已存在）照樣填值。
+2. Django migration：`apps/audit/migrations/0002_alter_manualreviewqueue_quote.py`。
+
+**理由**：維持「案件在流程哪個階段建立，就只依賴當下已存在的資料」的一致性，避免為了遷就 schema 約束而在流程中塞入不完整的 Quote 列。
+
+**後果**：
+- `apps/audit/models.py` 的 `ManualReviewQueue.quote` 欄位加上 `null=True, blank=True`。
+- `docs/reference/db_schema.md` 的 `manual_review_queue.quote_id` 列 Nullable 改為「是」，補上說明。
+
+## 2026-08-27 [標籤：使用者] 供應商模糊比對案件核准後，交還 n8n 流程的通知機制
+
+**狀態**：accepted
+
+**背景**：`supplier_fuzzy_match` 案件經人工在 `manual-review-queue/{id}/decide/` 核准（確認供應商身分）後，需要重新走一次「遮罩金額→LLM 解析品項/數量→查詢供應商/產品→試算→摘要→幻覺驗證」，才能真正產出報價。這段串接原本開工時被誤歸類為「非本次 Phase 範圍」寫進 PROGRESS.md 已知待補，但重讀 SPEC.md 後確認 FR-6a 明確要求「確認為系統疑似比對到的供應商...重新走正常遮罩→LLM解析流程」，屬於 Phase 3 範圍內、只是這次開發本身漏做，因此補上設計與實作。核心問題：Django 核准決議完成後，n8n 要怎麼知道「這個案件已核准、可以繼續」？
+
+**討論內容**：兩個方案——(a) Django 核准後主動呼叫 n8n 的一個新 Webhook（例如 `/webhook/inquiry/resume`），把 `review_id`／`raw_input_text`／`user_id`／`supplier_id` 當作 payload 帶過去；(b) n8n 用排程節點（Cron/Interval）定期輪詢 `manual-review-queue`，找出剛核准的 `supplier_fuzzy_match` 案件。(b) 需要在 `manual_review_queue` 上加一個「是否已被 n8n 撈取過」的狀態欄位避免重複處理，且引入輪詢延遲（不是即時），架構上多一層複雜度；(a) 是事件驅動、即時觸發，且 n8n 主流程本身就是靠 Webhook 觸發，風格一致，不需要額外狀態欄位。使用者選擇 (a)。
+
+**決策**：
+1. Django 主動呼叫 n8n 新增的 `N8N_RESUME_WEBHOOK_URL`（`/webhook/inquiry/resume`），在 `manual_review_service.decide_review()` 核准 `supplier_fuzzy_match` 案件、DB 交易確定提交後呼叫，帶 `review_id`／`raw_input_text`／`user_id`（原始詢價發起人，非核准者）／`supplier_id`。
+2. n8n 呼叫失敗（連線問題、逾時、非 2xx）不影響核准決議本身——DB 裡供應商已確認的事實不因外部呼叫失敗而回滾；`decide_review()` 回傳值多一個 transient 欄位 `resume_triggered`（非 DB 欄位）讓 API 層告知呼叫端是否成功觸發，供前端視需要顯示「已核准但通知續傳失敗，請手動確認」之類的提示。
+3. 為了讓 n8n 續傳流程知道「原始詢價發起人是誰」，`manual_review_queue` 新增 `requester` 欄位（FK → users，migration `0003_manualreviewqueue_requester`），`masking_service.mask_text()` 建立複核紀錄時一併填入。
+4. 續傳流程只需重新遮罩金額（供應商已由人工確認，不需要再猜），新增 `masking_service.mask_amounts_only()` 與對應端點 `POST /masking/mask-amounts-only/`，供 n8n 續傳子流程呼叫。
+
+**理由**：事件驅動比輪詢更符合系統既有的 Webhook 觸發風格，也不需要額外的「已處理」狀態欄位；核准這個動作的正確性（DB 交易）與「通知下游繼續處理」這個動作的可靠性分開處理，避免外部系統暫時不可用時把已經確認為真的人工決議也一併回滾。
+
+**後果**：
+- `apps/audit/models.py`：`ManualReviewQueue` 新增 `requester` 欄位。
+- `services/inquiry_resume_service.py`（新檔）：`trigger_resume()`。
+- `services/manual_review_service.py`：`decide_review()` 核准 `supplier_fuzzy_match` 時呼叫 `trigger_resume()`。
+- `services/masking_service.py`：新增 `mask_amounts_only()`。
+- `api/audit/views.py`／`api/audit/urls.py`：新增 `MaskAmountsOnlyView`（`POST /masking/mask-amounts-only/`）。
+- `config/settings.py`／`.env.example`：新增 `N8N_RESUME_WEBHOOK_URL`。
+- `n8n/workflows/inquiry-flow.json`：新增「續傳子流程」14 個節點（`Webhook 續傳詢價` 起始），節點數 19→33，本機驗證過程與發現的 bug 見 `docs/ADR/debug/n8n-workflow-authoring-issues.md`。
+- `docs/reference/api.md`：補上新端點與 `decide` 回應新增的 `resume_triggered` 欄位。

@@ -8,7 +8,7 @@ class ManualReviewQueueSerializer(serializers.ModelSerializer):
         model = ManualReviewQueue
         fields = [
             "id", "quote", "review_type", "ai_generated_text", "expected_value",
-            "supplier", "raw_input_text", "status", "user", "decision",
+            "supplier", "raw_input_text", "requester", "status", "user", "decision",
             "created_at", "updated_at",
         ]
 

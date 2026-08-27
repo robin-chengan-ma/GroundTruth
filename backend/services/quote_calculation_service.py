@@ -1,13 +1,17 @@
 """FR-4／FR-4a：報價試算與歷史均價比對。
 
 固定程式邏輯，LLM 不參與任何數字運算（NFR 可信度要求）。
-這裡只回傳計算結果（dict），是否要寫入 DB 由呼叫端（api 層）決定，
-Phase 2 範圍內先只回傳試算結果，不落地建立 Quote 紀錄（幻覺驗證與正式建單留待 Phase 3）。
+`calculate_quote()` 只回傳計算結果（dict），不落地寫入 DB，供只想試算不建單的情境使用。
+`create_quote()`（Phase 3 新增）在試算後正式建立 `Quote` 資料列——Phase 3 的幻覺驗證
+（`quotes/verify-hallucination/`）需要一個真實存在的 `quote_id` 才能運作，Phase 2 當時
+先只做試算，正式建單留到這裡補上（見 `docs/specs/PROGRESS.md` 已知待補）。
 """
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.core.exceptions import ObjectDoesNotExist
 
+from apps.procurement.models import Quote
+from repositories.core import UserRepository
 from repositories.erp import ProductRepository
 from repositories.procurement import QuoteRepository
 
@@ -61,6 +65,40 @@ def calculate_quote(product_id, quantity, supplier_id=None):
         "price_deviation_pct": price_deviation_pct,
         "price_deviation_flag": price_deviation_flag,
     }
+
+
+def create_quote(*, user_id, product_id, quantity, supplier_id):
+    """試算並正式建立 Quote 資料列（Phase 3：詢價主流程用這支，不是 calculate_quote()）。
+
+    supplier_id 在這裡是必填——建立 Quote 一定要有供應商，跟 calculate_quote() 允許省略
+    supplier_id（只是為了不比對歷史均價）語意不同。
+
+    回傳：calculate_quote() 的原始欄位 + "quote_id"（新建立的 Quote 主鍵）。
+    """
+    if supplier_id is None:
+        raise QuoteCalculationError("supplier_id 為必填（建立 Quote 需要指定供應商）")
+
+    try:
+        user = UserRepository.get(user_id)
+    except ObjectDoesNotExist as exc:
+        raise QuoteCalculationError("找不到指定的使用者") from exc
+
+    result = calculate_quote(product_id=product_id, quantity=quantity, supplier_id=supplier_id)
+
+    quote = Quote.objects.create(
+        user=user,
+        supplier_id=result["supplier_id"],
+        product_id=result["product_id"],
+        quantity=result["quantity"],
+        price=result["unit_price"],
+        total_amount=result["total_amount"],
+        currency=result["currency"],
+        status=Quote.Status.PENDING_VERIFICATION,
+        price_deviation_pct=result["price_deviation_pct"],
+    )
+
+    result["quote_id"] = quote.id
+    return result
 
 
 def _calculate_price_deviation(supplier_id, product_id, current_unit_price):

@@ -7,6 +7,7 @@ from services.quote_calculation_service import (
     PRICE_DEVIATION_THRESHOLD_PCT,
     QuoteCalculationError,
     calculate_quote,
+    create_quote,
 )
 
 
@@ -80,3 +81,38 @@ def test_calculate_quote_ignores_non_approved_history(user, supplier, product):
     )
     result = calculate_quote(product_id=product.id, quantity=1, supplier_id=supplier.id)
     assert result["price_deviation_pct"] is None
+
+
+# ---- create_quote（Phase 3：正式建立 Quote 資料列） ----
+
+@pytest.mark.django_db
+def test_create_quote_persists_row(user, supplier, product):
+    result = create_quote(user_id=user.id, product_id=product.id, quantity=3, supplier_id=supplier.id)
+
+    assert "quote_id" in result
+    quote = Quote.objects.get(id=result["quote_id"])
+    assert quote.user_id == user.id
+    assert quote.supplier_id == supplier.id
+    assert quote.product_id == product.id
+    assert quote.quantity == 3
+    assert quote.price == product.price
+    assert quote.total_amount == product.price * 3
+    assert quote.status == Quote.Status.PENDING_VERIFICATION
+
+
+@pytest.mark.django_db
+def test_create_quote_missing_supplier_id_raises(user, product):
+    with pytest.raises(QuoteCalculationError):
+        create_quote(user_id=user.id, product_id=product.id, quantity=1, supplier_id=None)
+
+
+@pytest.mark.django_db
+def test_create_quote_missing_user_raises(supplier, product):
+    with pytest.raises(QuoteCalculationError):
+        create_quote(user_id=999999, product_id=product.id, quantity=1, supplier_id=supplier.id)
+
+
+@pytest.mark.django_db
+def test_create_quote_invalid_product_raises(user, supplier):
+    with pytest.raises(QuoteCalculationError):
+        create_quote(user_id=user.id, product_id=999999, quantity=1, supplier_id=supplier.id)

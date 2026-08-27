@@ -17,7 +17,7 @@ updated: 2026-08-27
 | 項目 | 內容 |
 | --- | --- |
 | 入口 | `backend/manage.py runserver` |
-| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`（完整說明見 `backend/.env.example`） |
+| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`、`N8N_RESUME_WEBHOOK_URL`（FR-6a 供應商模糊比對案件核准後，Django 主動通知 n8n 續傳流程用；完整說明見 `backend/.env.example`） |
 | 外部依賴 | 本機 PostgreSQL（Phase 1 起） |
 | Health Check | 尚未建立專用端點；`GET /api/v1/roles/` 回 200 可視為存活 |
 | 已知限制 | JWT 認證尚未套用（Phase 4）；CRUD 端點目前 `AllowAny` |
@@ -29,7 +29,7 @@ updated: 2026-08-27
 | 執行方式 | `n8n/docker-compose.yml`（`docker compose up`，於 `n8n/` 目錄執行） |
 | 必要環境變數 | 複製 `n8n/.env.example` 為 `n8n/.env`：`DJANGO_API_BASE_URL`（容器內存取本機 Django 用 `http://host.docker.internal:8000`）、`INTERNAL_API_KEY`（需與 `backend/.env` 一致）、`GEMINI_API_KEY` |
 | 已知限制／踩坑 | n8n 2.x 預設擋 Code/Expression node 存取 `$env`，`docker-compose.yml` 已加 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` 開放，不然 workflow 裡的 `{{$env.xxx}}` 全部會失敗（`access to env vars denied`），本機驗證時發現並記錄，詳見 `docs/ADR/debug/n8n-env-access.md` |
-| Webhook 端點 | 匯入 `n8n/workflows/inquiry-flow.json` 後啟用（active），對外路徑 `POST http://localhost:5678/webhook/inquiry` |
+| Webhook 端點 | 匯入 `n8n/workflows/inquiry-flow.json` 後啟用（active），對外路徑 `POST http://localhost:5678/webhook/inquiry`；另有續傳子流程（FR-6a）路徑 `POST http://localhost:5678/webhook/inquiry/resume`，供 Django 核准供應商模糊比對案件後主動呼叫 |
 | 對外埠 | `5678` |
 | Health Check | `GET http://localhost:5678/healthz` |
 | 目前無基礎設施 | 沒有另外的 basic auth／對外網址；只在本機 Docker 跑，正式對外使用前應補上驗證 |

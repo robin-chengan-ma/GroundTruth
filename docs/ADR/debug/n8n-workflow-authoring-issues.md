@@ -32,3 +32,67 @@
 **修復**：`n8n/workflows/inquiry-flow.json` 的 Gemini 節點 URL 從 `gemini-2.0-flash` 改為 `gemini-3.6-flash`。
 
 **未驗證範圍**：這類雲端 LLM API 的模型名稱會持續變動，未來若又下架需要重新查 Google 官方文件確認最新可用模型名稱，`docs/reference/deploy.md` 或本檔案應同步更新。
+
+## 2026-08-27 [標籤：AI] Phase 3 workflow 本機驗證：4 種分支情境
+
+**現象**：Phase 3 把 workflow 從 7 個節點擴增到 19 個節點（新增 Mask/Unmask 節點、Gemini 摘要生成、幻覺驗證、兩層 IF 分流），改版幅度大，開工前先在本機用 mock 驗證過一輪再交付，避免重蹈 Phase 2 的 `jsonCode`/`$env` 踩坑。
+
+**重現方式**：
+1. 本機起假的 Django + Gemini mock server（單一 Python `http.server`，依 path／prompt 內容分流回應），把 workflow 裡兩個 Gemini 節點的 URL 暫時指向 mock（只用於本機驗證，交付物仍指向真實 Gemini endpoint）
+2. `n8n import:workflow` 匯入、`n8n publish:workflow` 啟用、重啟 n8n
+3. 分別用 4 種 `raw_text` 打 `POST /webhook/inquiry`，對應遮罩層與幻覺驗證的 4 種分支結果
+
+**踩坑與排查**：
+1. 本機殘留 Phase 2 舊版 workflow（`groundtruth-inquiry-flow-phase2`）與更早的一次性測試 workflow（`test-inquiry-flow-verify`）都掛在同一個 `/webhook/inquiry` 路徑上，導致新 workflow 啟用時噴 `SQLITE_CONSTRAINT: UNIQUE constraint failed: webhook_entity.webhookPath`；`n8n unpublish:workflow` 之後仍有一筆殘留在 `webhook_entity` 表沒清掉（本機 sqlite 資料庫本身的殘留資料問題，不影響交付物邏輯），直接用 Python 連 sqlite 手動清掉那筆殘留 row 才解決。這是本機驗證環境的殘留資料問題，不是 workflow 設計本身的 bug，記錄下來避免下次又卡在同樣地方。
+
+**驗證結果（4 種情境皆通過）**：
+1. **正常成功**：`raw_text` 含完整供應商全名＋數量，回傳 `{quote_id, summary_text, unit_price, total_amount, currency, price_deviation_pct, price_deviation_flag}`，摘要文字數字與試算結果一致。
+2. **供應商查無**（FR-2b）：`raw_text` 不含任何已知供應商，直接回覆 `{"detail": "查無供應商，請確認名稱或先建檔"}`，不寫入複核佇列、不呼叫 LLM。
+3. **供應商模糊比對**（FR-2b）：`raw_text` 只包含供應商名稱片段，回覆 `{"detail": "供應商身分待人工複核確認，請稍候", "review_id", "candidates"}`，流程在 Mask 節點階段中止。
+4. **幻覺驗證失敗**（FR-6）：模擬 Gemini 摘要漏掉一個真實數字，回覆 `{"detail": "報價摘要與真實資料不一致，已建立複核案件，待管理員確認", "review_id", "reasons"}`。
+
+**未驗證範圍**：同 Phase 2 的已知限制——這次驗證用 mock 取代真正的 Gemini API，兩個 Gemini 呼叫（詢價解析、摘要生成）尚未用真實 `GEMINI_API_KEY` 測試過。使用者本機測試真實 Gemini API 後應回報結果，若摘要生成的中文數字/格式與預期不同（例如仍輸出中文數字），需要調整 prompt 用詞。
+
+## 2026-08-27 [標籤：AI] FR-6a 續傳子流程本機驗證：發現並修正節點參照錯誤
+
+**背景**：供應商模糊比對案件經 `manual-review-queue/{id}/decide/` 核准後，Django 主動呼叫 n8n 的 `POST /webhook/inquiry/resume`（架構決策見 `docs/ADR/discuss/main-flow.md`），交還 n8n 重新走「遮罩金額→LLM 解析品項/數量→查詢供應商/產品→試算→摘要→幻覺驗證」流程。這段串接在上一輪驗證時（見前一條目「未驗證範圍」）確認屬於 Phase 3 範圍但尚未實作，本條目記錄補上並驗證的過程。workflow 節點數從 19 增加到 33（新增 14 個「續傳」節點）。
+
+**重現方式**：
+1. 沿用既有 mock Django + Gemini server，補上續傳流程需要的三個路由：`GET /api/v1/suppliers/{id}/`（detail route，供應商名稱已知只需查名稱）、`POST /api/v1/masking/mask-amounts-only/`、續傳版 `generateContent`（依 prompt 是否含 `supplier` 欄位描述，分流回傳「只含 item/quantity/currency」的簡化 JSON）
+2. 為避免跟正式 workflow 的 `/webhook/inquiry` 路徑衝突，另外匯入一份 webhook path 加 `-localtest` 後綴、且兩個 Gemini 節點 URL 暫時指向本機 mock 的測試專用副本（`groundtruth-inquiry-flow-phase3-localtest`，僅用於本機驗證，驗證完畢即刪除，未寫入交付物）
+3. `curl -X POST http://localhost:5678/webhook/inquiry/resume-localtest -d '{"review_id":77,"raw_input_text":"跟優品科採購A產品","user_id":5,"supplier_id":1}'`
+
+**踩坑與排查**：
+1. 第一次執行卡在「整合查詢結果（續傳）」節點丟出 `查無產品：A產品`（品項名稱其實有正確解析出來，但查詢卻查不到）。查 n8n log 定位到問題在上一個節點「查詢產品（續傳）」：這個節點的 URL 表達式寫 `{{$json.item}}`，原意是取「解析 LLM 輸出（續傳）」節點的輸出，但續傳流程的節點串接順序改成「解析 LLM 輸出（續傳）→查詢供應商名稱（續傳）→查詢產品（續傳）」（供應商已知，改成先查供應商名稱、再查產品，序列式串接、不是平行分支），所以「查詢產品（續傳）」的直接上游其實是「查詢供應商名稱（續傳）」，`$json` 在這裡指的是供應商查詢結果（只有 `id`/`name` 欄位），沒有 `item` 欄位，`encodeURIComponent(undefined)` 變成字面字串 `"undefined"`，查詢自然落空。
+2. **根因**：n8n 表達式裡的 `$json` 永遠是「直接上游節點」的輸出，不是「邏輯上想要的來源節點」的輸出；序列式串接（而非平行分支）時特別容易犯這個錯，因為中間插入的節點會悄悄改變 `$json` 指向的內容。
+
+**修復**：`build_workflow.py` 裡「查詢產品（續傳）」節點的 URL，把 `{{encodeURIComponent($json.item)}}` 改成明確具名參照 `{{encodeURIComponent($('解析 LLM 輸出（續傳）').first().json.item)}}`，不依賴隱含的 `$json`。
+
+**驗證結果**：修正後整段續傳子流程（webhook 接收→金額遮罩→Gemini 解析品項→查供應商名稱→查產品→整合→Django 試算建立 Quote→Gemini 生成摘要→幻覺驗證→分流回覆）成功跑通，`幻覺驗證（續傳）` 分支正確依 mock 回應路由到「回覆：摘要待複核（續傳）」，回傳：
+```json
+{"detail":"報價摘要與真實資料不一致，已建立複核案件，待管理員確認","review_id":55,"reasons":["mock: number mismatch"]}
+```
+成功分支（`IF：幻覺驗證通過？（續傳）` 為 true）與主流程既有的同構 IF 節點模式一致，已在前一條目（4 種分支情境）驗證過同樣的路由邏輯，本次不重複用不同 mock 內容硬測，視為結構等價驗證。
+
+**未驗證範圍**：同前，兩個 Gemini 呼叫尚未用真實 `GEMINI_API_KEY` 測試過；`http-lookup-supplier-resume`／`http-mask-amounts-resume` 這類新端點的正式 Django 端邏輯已有 100% 覆蓋率單元測試，但本次只驗證了 n8n 流程串接本身（節點連線、表達式參照是否正確），未涵蓋 Django 端與真實 PostgreSQL 的整合測試（已由既有 pytest 套件覆蓋，非本次 n8n 驗證範圍）。
+
+## 2026-08-27 [標籤：使用者] FR-2b 第三種情境（格式無法解析）遺漏，補齊後本機驗證
+
+**背景**：使用者直接追問「Phase 3 是不是都做完了」，重新逐條核對 SPEC.md 才發現 FR-2b 定義了三種遮罩失敗情境，但只做了前兩種（查無供應商、模糊比對）；第三種「供應商比對成功但其他欄位（如金額）格式無法解析→不進複核佇列，即時回覆使用者請求修正格式重新輸入」完全沒做。檢查主流程與續傳流程的「解析 LLM 輸出」Code node，發現 `JSON.parse(cleaned)` 沒有 try/catch，`quantity` 欄位也沒有做數字格式驗證，一旦 LLM 回傳格式壞掉或 `quantity` 不是合法數字，會直接 throw 一個未被攔截的 Error，n8n 只會當成一般執行失敗處理，不會產生 SPEC 要求的明確訊息，也不會跟複核佇列的情境區分開來。
+
+**修復**：
+1. 主流程與續傳流程的「解析 LLM 輸出」節點都改成：`JSON.parse` 包 try/catch，額外驗證 `parsed.item`／`quantity`（`Number.isFinite` 且 `> 0`，主流程另外驗證 `parsed.supplier`）是否有效；任一項失敗時不 throw，改回傳 `{ parse_error: true }`。
+2. 兩個流程各自新增一個 IF 節點（`IF：解析格式正確？`／`IF：解析格式正確？（續傳）`），依 `parse_error` 分流：true 分支照原本流程繼續（Unmask 供應商／查詢供應商名稱），false 分支導向新增的回覆節點（`回覆：格式錯誤`／`回覆：格式錯誤（續傳）`），直接回應 `{"detail": "詢價內容格式無法解析，請確認數量/金額等欄位後重新輸入"}`，不寫入 `manual_review_queue`。
+3. `build_workflow.py` 重新產生後節點數 33→37。
+
+**驗證方式**：mock server 的 `generateContent` 路由新增一個依 prompt 是否含「格式錯誤測試」這個標記字串分流的分支，回傳 `quantity` 為中文字串（`"二十個"`）而非數字，模擬 LLM 解析出不合法格式的情況。用同一顆本機測試專用副本（`groundtruth-inquiry-flow-phase3-localtest`）分別打：
+- 主流程 `POST /webhook/inquiry-localtest`，`raw_text` 含「格式錯誤測試」標記
+- 續傳流程 `POST /webhook/inquiry/resume-localtest`，`raw_input_text` 含同一標記
+
+兩者皆正確回傳：
+```json
+{"detail":"詢價內容格式無法解析，請確認數量/金額等欄位後重新輸入"}
+```
+另外重新跑過既有 5 種情境（主流程：成功／查無供應商／模糊比對／幻覺驗證失敗；續傳流程：成功路徑至幻覺驗證分流）確認補丁沒有影響既有行為。驗證完成後照慣例把本機測試專用副本 unpublish 並清掉殘留的 sqlite `workflow_entity`／`webhook_entity` row，交付物 `n8n/workflows/inquiry-flow.json` 兩個 Gemini 節點仍指向真實 endpoint。
+
+**未驗證範圍**：同前，兩個 Gemini 呼叫尚未用真實 `GEMINI_API_KEY` 測試過——這次用中文數字字串模擬「LLM 回傳格式異常」的情況是否貼近真實 Gemini API 的實際失敗模式（例如 Gemini 更常見的異常可能是回傳結構完全不是預期 JSON、而非欄位值型別錯誤）也還沒有真實數據佐證，待使用者實測時留意。

@@ -1,7 +1,18 @@
-from rest_framework import viewsets
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from lib.authentication import InternalApiKeyAuthentication
 from repositories.audit import AuditLogRepository, ManualReviewQueueRepository
 from schemas.audit import AuditLogSerializer, ManualReviewQueueSerializer
+from services.manual_review_service import (
+    ManualReviewConflictError,
+    ManualReviewError,
+    claim_review,
+    decide_review,
+)
+from services.masking_service import MaskingError, mask_amounts_only, mask_text, unmask_text
 
 
 class ManualReviewQueueViewSet(viewsets.ModelViewSet):
@@ -9,6 +20,46 @@ class ManualReviewQueueViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return ManualReviewQueueRepository.all()
+
+    @action(detail=True, methods=["post"])
+    def claim(self, request, pk=None):
+        """FR-6b：認領案件，避免多位管理員同時處理同一案件（衝突回 409）。"""
+        user_id = request.data.get("user_id")
+        if user_id is None:
+            return Response({"detail": "user_id 為必填"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            review = claim_review(pk, user_id)
+        except ManualReviewConflictError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ManualReviewError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ManualReviewQueueSerializer(review).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def decide(self, request, pk=None):
+        """FR-6a／FR-6c：決議案件（核准/駁回），依 review_type 分流，並寫入稽核 log。"""
+        user_id = request.data.get("user_id")
+        decision = request.data.get("decision")
+        supplier_id = request.data.get("supplier_id")
+
+        if user_id is None or decision is None:
+            return Response({"detail": "user_id、decision 為必填"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            review = decide_review(pk, user_id, decision, supplier_id=supplier_id)
+        except ManualReviewConflictError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ManualReviewError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = ManualReviewQueueSerializer(review).data
+        # resume_triggered 只在核准 supplier_fuzzy_match 案件時才會被設定（見
+        # manual_review_service.decide_review()），標示「有沒有成功通知 n8n 續傳流程」。
+        if hasattr(review, "resume_triggered"):
+            data["resume_triggered"] = review.resume_triggered
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class AuditLogViewSet(viewsets.ModelViewSet):
@@ -19,3 +70,57 @@ class AuditLogViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return AuditLogRepository.all()
+
+
+class MaskTextView(APIView):
+    """FR-2：n8n Mask 節點呼叫，把使用者原始輸入中的供應商名稱／金額換成 Token。
+
+    只給 n8n 呼叫（需要 X-Internal-Api-Key），不開放給前端使用者。
+    對應/遮罩表只在這次回應中回傳給 n8n（於當次 workflow 執行記憶體中保存），
+    依 NFR-1 絕不落地寫入 DB。
+
+    user_id：詢價發起人，供應商模糊比對案件會存進 `manual_review_queue.requester`，
+    核准後才知道要用誰的身分重新建立 Quote（見 FR-6a 續傳流程）。
+    """
+
+    authentication_classes = [InternalApiKeyAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        raw_text = request.data.get("raw_text", "")
+        requester_id = request.data.get("user_id")
+        try:
+            result = mask_text(raw_text, requester_id=requester_id)
+        except MaskingError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class UnmaskTextView(APIView):
+    """FR-2a：n8n Unmask 節點呼叫，LLM 解析完成後立即用對照表還原真實值。"""
+
+    authentication_classes = [InternalApiKeyAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        masked_text = request.data.get("masked_text", "")
+        mapping = request.data.get("mapping", {})
+        result = unmask_text(masked_text, mapping)
+        return Response({"text": result}, status=status.HTTP_200_OK)
+
+
+class MaskAmountsOnlyView(APIView):
+    """FR-6a 續傳流程專用：供應商已由人工確認（走 supplier_id，不需要文字比對），
+    Mask 節點只需要照常規則遮罩金額。只給 n8n 呼叫。
+    """
+
+    authentication_classes = [InternalApiKeyAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        raw_text = request.data.get("raw_text", "")
+        try:
+            result = mask_amounts_only(raw_text)
+        except MaskingError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(result, status=status.HTTP_200_OK)

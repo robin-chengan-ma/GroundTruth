@@ -19,7 +19,11 @@ class ManualReviewQueue(models.Model):
         APPROVED = "approved", "approved"
         REJECTED = "rejected", "rejected"
 
-    quote = models.ForeignKey(Quote, on_delete=models.CASCADE, related_name="review_entries", db_column="quote_id")
+    quote = models.ForeignKey(
+        Quote, on_delete=models.CASCADE, null=True, blank=True,
+        related_name="review_entries", db_column="quote_id",
+        help_text="supplier_fuzzy_match 案件在 Mask 階段建立，尚無 Quote，此欄位為 null",
+    )
     review_type = models.CharField(max_length=30, choices=ReviewType.choices)
     ai_generated_text = models.TextField(null=True, blank=True, help_text="幻覺案件用")
     expected_value = models.TextField(null=True, blank=True, help_text="原始真實數字（JSON），幻覺案件用")
@@ -29,6 +33,11 @@ class ManualReviewQueue(models.Model):
         help_text="模糊比對案件：系統疑似比對到的供應商",
     )
     raw_input_text = models.TextField(null=True, blank=True, help_text="模糊比對案件：使用者原始輸入")
+    requester = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="requested_review_entries", db_column="requester_user_id",
+        help_text="模糊比對案件：原始詢價發起人，核准後交還 n8n 重新觸發流程時要用來建立 Quote",
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.UNCLAIMED)
     user = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,

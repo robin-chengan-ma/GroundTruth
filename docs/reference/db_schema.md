@@ -1,6 +1,6 @@
 ---
 title: DB Schema
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # DB Schema
@@ -8,7 +8,7 @@ updated: 2026-08-26
 > 技術參考文件，跟著程式碼異動更新，不是決策紀錄（決策放 `docs/ADR/discuss/`）也不是產品規格（放
 > `docs/specs/SPEC.md`）。內容力求簡述；設計理由與討論過程見 `docs/ADR/discuss/db-schema.md`。
 >
-> **最新 Migration 編號**：`0001_initial`（core／crm／erp／procurement／audit 五個 app 各自的 0001_initial，Phase 1 建立，2026-08-26）。
+> **最新 Migration 編號**：`0001_initial`（core／crm／erp／procurement／audit 五個 app 各自的 0001_initial，Phase 1 建立，2026-08-26）；audit app 另有 `0002_alter_manualreviewqueue_quote`（Phase 3，2026-08-27，manual_review_queue.quote_id 改為 nullable）。
 
 ## roles（角色）
 
@@ -102,7 +102,7 @@ updated: 2026-08-26
 | Column | 型別 | Nullable | Default | PK | FK | Index/Unique | 說明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | 否 | auto | PK | | | |
-| quote_id | bigint | 否 | — | | → quotes.id | Index | |
+| quote_id | bigint | 是 | null | | → quotes.id | Index | supplier_fuzzy_match 案件在 Mask 階段建立，尚無 Quote，此欄位為 null；hallucination_mismatch 案件照樣填值 |
 | review_type | varchar(30) | 否 | — | | | | hallucination_mismatch／supplier_fuzzy_match |
 | ai_generated_text | text | 是 | null | | | | 幻覺案件用 |
 | expected_value | text | 是 | null | | | | 原始真實數字（JSON），幻覺案件用 |
