@@ -34,13 +34,18 @@ updated: 2026-08-27
 | 2026-08-27 | FR-6a | n8n workflow 新增「續傳子流程」14 個節點（`Webhook 續傳詢價` → Mask 金額 → Gemini 解析 → 查詢供應商/產品 → Django 試算 → Gemini 摘要 → 幻覺驗證 → 分流回覆），workflow 節點數 19→33 | Claude | 完成 | 本機用 mock Django + Gemini 驗證整段串接（webhook 接收→...→幻覺驗證分流回覆）通過；過程中發現並修正一個 bug：`查詢產品（續傳）` 節點誤用 `$json.item`（前一節點已改為查詢供應商，`$json` 已非解析節點輸出），改用 `$('解析 LLM 輸出（續傳）').first().json.item` 明確引用；詳見 `docs/ADR/debug/n8n-workflow-authoring-issues.md` |
 | 2026-08-27 | Phase 3 | 測試：`inquiry_resume_service`／`masking_service`（`mask_amounts_only`、`requester` 相關）／`manual_review_service`（resume 觸發與失敗容錯） | Claude | 完成 | 121 個測試全過，整體覆蓋率 98%；Phase 3 安全關鍵模組皆 100% |
 | 2026-08-27 | FR-2b | 補上 FR-2b 第三種遮罩失敗情境（供應商比對成功但其他欄位如金額/數量格式無法解析→即時回覆請求修正格式，不進複核佇列）：主流程與續傳子流程的「解析 LLM 輸出」節點皆改為 try/catch＋`quantity` 數字格式驗證，不再對格式錯誤直接 throw；各新增一個 IF 分流節點與對應回覆節點 | Claude | 完成 | 這段原本重讀 SPEC.md 才發現漏做（FR-2b 三個分支只做了前兩個），補齊後 workflow 節點數 33→37；本機用 mock 驗證主流程與續傳流程的格式錯誤分支皆正確回覆「詢價內容格式無法解析，請確認數量/金額等欄位後重新輸入」，且不寫入複核佇列，其餘 5 種既有分支重新跑過一遍確認未受影響；詳見 `docs/ADR/debug/n8n-workflow-authoring-issues.md` |
+| 2026-08-27 | 使用者 | 真實 `GEMINI_API_KEY` 端到端實測（Django + Docker n8n + 真實 Gemini + seed 資料）：正常成功／查無供應商／模糊比對／格式無法解析 4 種分支皆通過，真實摘要文字格式與 mock 假設一致 | Robin | 完成 | 續傳流程實測時發現一個 bug：主流程「Mask 遮罩」節點沒有把 `user_id` 轉傳給 `masking/mask/`，導致 `manual_review_queue.requester` 恆為 `null`，核准後續傳流程的 `quotes/calculate/` 因此收到空的 `user_id` 回 400；已修正並重新推送 workflow，詳見 `docs/ADR/debug/n8n-workflow-authoring-issues.md` |
+| 2026-08-27 | 使用者 | 修正後重新實測供應商模糊比對→核准→續傳完整流程 | Robin | 完成 | `manual_review_queue.requester` 正確帶值（不再是 `null`），claim/decide/續傳皆成功，n8n Executions 顯示續傳子流程完整跑到「回覆：成功（續傳）」分支（真實 Gemini 摘要通過幻覺驗證），確認修復生效 |
 
 ## 已知待補（非本次 Phase 範圍，記錄避免遺漏）
 
 - JWT 認證（FR-1a 前半，使用者對 Vue 前端）：Phase 4 範圍；`inquiries/trigger/`、`manual-review-queue/{id}/claim/decide/` 目前暫用 `AllowAny`
 - API 目前僅測試 CRUD 正確性，尚未針對 FR 業務規則（如金額門檻、狀態機轉換限制）撰寫驗證測試，將於對應 Phase 補上
 - Django 版本：SPEC.md 標註 6.x，但目前 PyPI 最新穩定版為 5.2.x（6.0 尚未釋出），本次以 5.2 落地，待 Django 6.0 正式發布後再評估升級
-- n8n workflow 尚未用真實 `GEMINI_API_KEY` 驗證過（本機驗證用 mock 取代兩個 Gemini 呼叫）；若真實回應格式與 mock 假設不同（例如摘要仍輸出中文數字而非阿拉伯數字），需要調整 prompt 用詞，比照 Phase 2 模式待使用者本機測試後回報
+- 以下情境的邏輯本身皆有 100% 單元測試覆蓋，但尚未在真實環境（真實 Gemini + 真實 n8n + 真實 Django）端到端跑過一次，原因是這些情境較難用真實 LLM 刻意觸發，非阻擋 Phase 3 完成的問題，記錄供未來需要更完整實測時參考：
+  - 幻覺驗證失敗分支（`hallucination_mismatch`）——真實 Gemini 至今每次摘要都準確，未曾實際觸發過
+  - 幻覺驗證失敗案件的 claim/decide 核准（套用系統樣板）／駁回（Quote 轉 `cancelled`）
+  - 供應商模糊比對案件的駁回（rejected）路徑
 - FR-7／FR-7a 簽核路由（`approval_routing_service.py`，AGENTS.md 已列入 100% 覆蓋率要求）尚未實作：`manual-review-queue/{id}/decide/` 核准後 Quote 進入 `pending_approval` 狀態即停止，尚無自動指派簽核角色的邏輯
 
 ## 推版紀錄

@@ -96,3 +96,37 @@
 另外重新跑過既有 5 種情境（主流程：成功／查無供應商／模糊比對／幻覺驗證失敗；續傳流程：成功路徑至幻覺驗證分流）確認補丁沒有影響既有行為。驗證完成後照慣例把本機測試專用副本 unpublish 並清掉殘留的 sqlite `workflow_entity`／`webhook_entity` row，交付物 `n8n/workflows/inquiry-flow.json` 兩個 Gemini 節點仍指向真實 endpoint。
 
 **未驗證範圍**：同前，兩個 Gemini 呼叫尚未用真實 `GEMINI_API_KEY` 測試過——這次用中文數字字串模擬「LLM 回傳格式異常」的情況是否貼近真實 Gemini API 的實際失敗模式（例如 Gemini 更常見的異常可能是回傳結構完全不是預期 JSON、而非欄位值型別錯誤）也還沒有真實數據佐證，待使用者實測時留意。
+
+## 2026-08-27 [標籤：使用者] 真實 GEMINI_API_KEY 實測：發現「Mask 遮罩」節點未轉傳 user_id，續傳流程試算報價失敗
+
+**現象**：使用者在自己機器上用真實 Gemini API、真實 Docker n8n、真實 Django + seed 資料完整跑一輪 5 種分支：正常成功／查無供應商／模糊比對／格式無法解析皆通過（含真實 Gemini 回應格式驗證：摘要文字正確輸出阿拉伯數字，未觸發過往擔心的中文數字問題）。接續測續傳流程：`claim` → `decide` 核准，回應正確帶 `"resume_triggered": true`，但 Django log 隨即出現：
+```
+[27/Aug/2026 16:21:28] "POST /api/v1/quotes/calculate/ HTTP/1.1" 400 30
+```
+回應內容 `{"detail": "user_id 為必填"}`，且核准回應本身的 `manual_review_queue.requester` 欄位是 `null`。
+
+**根因**：主流程「Mask 遮罩」節點呼叫 `POST /masking/mask/` 的 `jsonBody` 只帶了 `raw_text`，沒有把 webhook 收到的 `user_id` 一併轉傳：
+```js
+JSON.stringify({ raw_text: $json.body.raw_text })
+```
+`inquiries/trigger/` 端點與 `inquiry_service.trigger_inquiry()` 早就有把 `user_id` 放進送給 n8n 的 webhook payload（Phase 3 開發時就確認過），但 n8n workflow 這邊的「Mask 遮罩」節點沒有把它繼續往下傳，導致 `masking_service.mask_text()` 拿到的 `requester_id` 永遠是 `None`，`manual_review_queue.requester` 因此永遠是 `null`。核准供應商模糊比對案件、觸發 `trigger_resume()` 時，`requester_id` 這個 `None` 值就一路帶到續傳 webhook payload 的 `user_id`，最終傳進 `quotes/calculate/`，撞上該端點對 `user_id` 的必填驗證（Phase 3 開發時特意把這個驗證放在 API 層，見 `services/inquiry_service.py` 的設計筆記）。
+
+這個 bug 之所以在先前用 mock 驗證時沒被抓到，是因為 mock server 的 `masking/mask/` 端點本來就不檢查／不使用 `user_id`，只看 `raw_text` 內容決定回應，所以就算 n8n 沒轉傳 `user_id`，mock 端也不會反映出問題；只有接到真實 Django（會實際把 `requester_id` 寫進 DB、並在續傳流程真正用到它）才會暴露這個斷點。這點值得記錄：**mock 驗證能確認流程「連線」是否正確，但無法取代對「資料實際有沒有正確流動」的驗證**，尤其是像 `user_id` 這種在 mock 端被忽略、但在真實後端會被使用的欄位。
+
+**修復**：`build_workflow.py` 的「Mask 遮罩」節點 `jsonBody` 改為：
+```js
+JSON.stringify({ raw_text: $json.body.raw_text, user_id: $json.body.user_id })
+```
+重新產生 workflow，節點數不變（37），只改動這一個節點的參數。
+
+**驗證**：檢查續傳流程「整合查詢結果（續傳）」節點讀取 `webhookBody.user_id` 那段邏輯本身沒有問題（正確讀取 `$('Webhook 續傳詢價').first().json.body.user_id`），確認問題只出在「Mask 遮罩」節點沒有把 `user_id` 往下傳這一步；本機用 mock 重新跑一次模糊比對＋續傳流程（帶入非空 `user_id`），確認整段串接能正常跑到幻覺驗證階段（不再卡在 `quotes/calculate/` 的必填驗證），細節同前一條目。修復後的 workflow 已推送給使用者，待使用者用真實環境重新跑一次模糊比對→核准→續傳的完整流程確認。
+
+**未驗證範圍**：修復後尚未在使用者的真實環境（真實 Django + 真實 n8n + 真實 Gemini）重新跑過一次完整的模糊比對→核准→續傳流程，只在本機用 mock 確認資料能正確流動；使用者下次測試時應重新製造一個模糊比對案件（因為 `review_id=1` 已經因這次的失敗嘗試被消耗掉，狀態已是 `resolved`）並完整跑一次，確認 `manual_review_queue.requester` 不再是 `null`、`quotes/calculate/` 不再回 400。
+
+**後續補充（同日）**：使用者用真實環境重新測過一次，確認修復生效：
+1. 匯入修好的 workflow 後，`docker compose exec n8n n8n import:workflow` 匯入完不會自動生效，要 `docker compose restart n8n` 容器才會套用（跟 CLI 訊息提示的一樣，這裡再次驗證這條踩坑對 Docker Compose 部署方式也成立，不只是本機 CLI 直接跑 `n8n start` 的情況）；重啟後還發現 workflow 的 Active 開關狀態沒有保留，需要在網頁介面手動重新開啟才會重新註冊 webhook。
+2. 重新製造模糊比對案件（新的 `review_id`），查詢該筆紀錄確認 `requester` 已正確帶入使用者 id（不再是 `null`）。
+3. claim → decide 核准，`resume_triggered: true`，Django 未再出現 `quotes/calculate/` 的 400。
+4. n8n Executions 頁面確認續傳子流程完整跑完（`Succeeded in 12.77s`），且這次真實 Gemini 生成的摘要通過了幻覺驗證，走的是「回覆：成功（續傳）」分支——這也是續傳流程「正常成功」情境第一次用真實 Gemini（而非 mock）驗證過。
+
+Bug 確認修復完畢。

@@ -34,7 +34,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ raw_text: $json.body.raw_text }) }}",
+        "jsonBody": "={{ JSON.stringify({ raw_text: $json.body.raw_text, user_id: $json.body.user_id }) }}",
         "options": {}
       },
       "id": "http-mask",
