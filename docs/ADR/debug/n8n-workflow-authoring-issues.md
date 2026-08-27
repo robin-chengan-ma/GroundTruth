@@ -22,3 +22,13 @@
 `price_deviation_pct` 對照 seed 資料中優品科技／A產品-辦公椅的兩筆已核准歷史單價（1450、1480，均價 1465）算出偏離 2.39%，數字正確，流程閉環驗證通過。
 
 **未驗證範圍**：這次驗證用 mock 取代真正的 Gemini API，尚未用真實 `GEMINI_API_KEY` 測試過 Gemini 回應格式是否與 mock 假設的一致（例如是否穩定回傳可直接 `JSON.parse` 的文字、是否會有 ```json 包裹等邊界情況）；使用者申請到金鑰後應補測一次。
+
+## 2026-08-27 [標籤：使用者] Gemini 模型名稱過期
+
+**現象**：申請到真實 `GEMINI_API_KEY` 並發布 workflow 後，實際打 `POST /api/v1/inquiries/trigger/`，Django 500，n8n Executions 顯示「Gemini 解析詢價」節點失敗。
+
+**根因**：Gemini 節點呼叫的模型 `models/gemini-2.0-flash` 已被 Google 下架，錯誤訊息明確指示改用 `models/gemini-3.6-flash`。
+
+**修復**：`n8n/workflows/inquiry-flow.json` 的 Gemini 節點 URL 從 `gemini-2.0-flash` 改為 `gemini-3.6-flash`。
+
+**未驗證範圍**：這類雲端 LLM API 的模型名稱會持續變動，未來若又下架需要重新查 Google 官方文件確認最新可用模型名稱，`docs/reference/deploy.md` 或本檔案應同步更新。

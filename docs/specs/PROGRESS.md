@@ -20,7 +20,7 @@ updated: 2026-08-27
 | 2026-08-27 | Phase 2 | Suppliers／Products CRUD 加 `SearchFilter`（依名稱查詢） | Claude | 完成 | 供 n8n workflow 依 LLM 解析出的名稱查詢用 |
 | 2026-08-27 | Phase 2 | n8n 環境（`n8n/docker-compose.yml`）與主流程 workflow（`n8n/workflows/inquiry-flow.json`） | Claude | 完成 | Webhook → Gemini 解析 → 查供應商/產品 → Django 試算 → 回傳；不含遮罩/幻覺驗證（Phase 3 範圍） |
 | 2026-08-27 | Phase 2 | 測試：authentication／quote_calculation_service／inquiry_service／API 端點 | Claude | 完成 | 43 個測試全過，覆蓋率 86%；`ruff check` 通過 |
-| 2026-08-27 | Phase 2 | 本機端到端驗證（mock Gemini + 真實 n8n + Django + seed 資料） | Claude | 完成 | 詳見 `docs/ADR/debug/n8n-workflow-authoring-issues.md`，驗證通過，價格偏離計算正確 |
+| 2026-08-27 | Phase 2 | 本機端到端驗證（mock Gemini + 真實 n8n + Django + seed 資料） | Claude | 完成 | 詳見 `docs/ADR/debug/n8n-workflow-authoring-issues.md`；後續使用者用真實 GEMINI_API_KEY 再驗證一次同樣通過（原本的 gemini-2.0-flash 模型已下架，改用 gemini-3.6-flash） |
 
 ## 已知待補（非本次 Phase 範圍，記錄避免遺漏）
 
@@ -29,7 +29,6 @@ updated: 2026-08-27
 - Django 版本：SPEC.md 標註 6.x，但目前 PyPI 最新穩定版為 5.2.x（6.0 尚未釋出），本次以 5.2 落地，待 Django 6.0 正式發布後再評估升級
 - `quotes/calculate/` 只回傳計算結果、不落地寫入 `Quote` 資料列；正式建單邏輯待 Phase 3 幻覺驗證通過後補上
 - n8n workflow 目前用「名稱精確比對」查供應商/產品，還沒有 Phase 3 的 Token 化遮罩與模糊比對 fallback（FR-2b）
-- Gemini 解析節點目前只用 mock 驗證過流程；使用者申請到真實 `GEMINI_API_KEY` 後應補測一次真實回應格式是否與假設一致
 
 ## 推版紀錄
 

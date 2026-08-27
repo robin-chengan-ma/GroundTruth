@@ -19,7 +19,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是採購詢價解析器。將以下自然語言詢價文字解析成 JSON，只回傳 JSON，不要其他文字，格式為 {\"item\": string, \"quantity\": number, \"supplier\": string, \"currency\": string}（幣別預設 TWD）：\\n\\n${$json.body.raw_text}` }] }] }) }}",
