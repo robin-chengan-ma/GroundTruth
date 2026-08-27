@@ -93,8 +93,14 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
-    # Phase 1：先開放 AllowAny 以利 CRUD 驗收；JWT 認證（FR-1a）於後續 Phase 套用。
+    # Phase 1：先開放 AllowAny 以利 CRUD 驗收；使用者對外 JWT 認證（FR-1a 前半）留待 Vue 前端串接時（Phase 4）套用。
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+    # Phase 2：n8n↔Django 內部端點另外用 InternalApiKeyAuthentication + IsAuthenticated 明確保護，
+    # 不放進 DEFAULT_AUTHENTICATION_CLASSES 全域套用，避免影響一般 CRUD 端點的 AllowAny 行為。
 }
+
+# n8n ↔ Django 內部服務認證（FR-1a）與流程協調用設定。
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
+N8N_INQUIRY_WEBHOOK_URL = os.environ.get("N8N_INQUIRY_WEBHOOK_URL", "http://localhost:5678/webhook/inquiry")

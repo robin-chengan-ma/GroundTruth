@@ -1,0 +1,28 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: groundtruth-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - TZ=Asia/Taipei
+      - GENERIC_TIMEZONE=Asia/Taipei
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      # n8n 2.x 預設擋掉 Code/Expression node 對 $env 的存取，workflow 裡的
+      # {{$env.DJANGO_API_BASE_URL}} 等寫法要靠這個才能用（本機驗證時發現，見 PROGRESS.md）。
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # Phase 2 只在本機 Docker 內部跑，先不開 basic auth；正式對外使用前應補上。
+      - DJANGO_API_BASE_URL=${DJANGO_API_BASE_URL:-http://host.docker.internal:8000}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?請在 n8n/.env 設定 INTERNAL_API_KEY，需與 backend/.env 的值一致}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:?請在 n8n/.env 設定 GEMINI_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/workflows:ro
+
+volumes:
+  n8n_data:

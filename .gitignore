@@ -16,6 +16,10 @@ eggs/
 .eggs/
 lib/
 lib64/
+# 專案自己的 backend/lib/（JWT/API Key 認證等基礎設施程式碼，見 AGENTS.md 目錄慣例），
+# 不要被上面給虛擬環境用的通用 lib/ 規則誤擋掉。
+!backend/lib/
+!backend/lib/**
 parts/
 sdist/
 var/

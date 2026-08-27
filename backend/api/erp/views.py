@@ -1,4 +1,4 @@
-from rest_framework import viewsets
+from rest_framework import filters, viewsets
 
 from repositories.erp import InventoryRepository, ProductRepository, PurchaseSuggestionRepository
 from schemas.erp import InventorySerializer, ProductSerializer, PurchaseSuggestionSerializer
@@ -6,6 +6,8 @@ from schemas.erp import InventorySerializer, ProductSerializer, PurchaseSuggesti
 
 class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
+    filter_backends = [filters.SearchFilter]
+    search_fields = ["name"]  # 供 Phase 2 n8n 依名稱查詢產品用（?search=A產品）
 
     def get_queryset(self):
         return ProductRepository.all()

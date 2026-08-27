@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from rest_framework.test import APIClient
 
@@ -38,4 +40,4 @@ def supplier(db):
 
 @pytest.fixture
 def product(db):
-    return Product.objects.create(name="測試產品", price="100.00", currency="TWD")
+    return Product.objects.create(name="測試產品", price=Decimal("100.00"), currency="TWD")

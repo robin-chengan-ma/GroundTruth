@@ -1,0 +1,138 @@
+{
+  "id": "groundtruth-inquiry-flow-phase2",
+  "name": "GroundTruth - 詢價主流程（Phase 2：不含遮罩/幻覺驗證）",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inquiry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-inquiry",
+      "name": "Webhook 接收詢價",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0],
+      "webhookId": "inquiry"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是採購詢價解析器。將以下自然語言詢價文字解析成 JSON，只回傳 JSON，不要其他文字，格式為 {\"item\": string, \"quantity\": number, \"supplier\": string, \"currency\": string}（幣別預設 TWD）：\\n\\n${$json.body.raw_text}` }] }] }) }}",
+        "options": {}
+      },
+      "id": "http-gemini-parse",
+      "name": "Gemini 解析詢價",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [40, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 從 Gemini 回應中取出文字，解析成結構化物件。\n// LLM 有時會用 ```json ... ``` 包住，這裡先去掉再 parse。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nconst cleaned = text.replace(/```json|```/g, '').trim();\nconst parsed = JSON.parse(cleaned);\n\nreturn [{\n  json: {\n    item: parsed.item,\n    quantity: parsed.quantity,\n    supplier: parsed.supplier,\n    currency: parsed.currency || 'TWD',\n  }\n}];"
+      },
+      "id": "code-parse-llm-output",
+      "name": "解析 LLM 輸出",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [280, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/suppliers/?search={{encodeURIComponent($json.supplier)}}",
+        "options": {}
+      },
+      "id": "http-lookup-supplier",
+      "name": "查詢供應商",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/products/?search={{encodeURIComponent($('解析 LLM 輸出').item.json.item)}}",
+        "options": {}
+      },
+      "id": "http-lookup-product",
+      "name": "查詢產品",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [760, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 依序整合：LLM 解析結果 + 供應商查詢 + 產品查詢（線性串接，不用平行分支，避免 merge 時序問題）。\nconst parsed = $('解析 LLM 輸出').first().json;\nconst supplierResult = $('查詢供應商').first().json.results?.[0];\nconst productResult = $input.first().json.results?.[0];\n\nif (!supplierResult) {\n  throw new Error(`查無供應商：${parsed.supplier}`);\n}\nif (!productResult) {\n  throw new Error(`查無產品：${parsed.item}`);\n}\n\nreturn [{\n  json: {\n    product_id: productResult.id,\n    supplier_id: supplierResult.id,\n    quantity: parsed.quantity,\n  }\n}];"
+      },
+      "id": "code-merge-lookup",
+      "name": "整合查詢結果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/quotes/calculate/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "http-calculate-quote",
+      "name": "Django 試算報價",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1240, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "回傳結果",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1480, 0]
+    }
+  ],
+  "connections": {
+    "Webhook 接收詢價": {
+      "main": [[{ "node": "Gemini 解析詢價", "type": "main", "index": 0 }]]
+    },
+    "Gemini 解析詢價": {
+      "main": [[{ "node": "解析 LLM 輸出", "type": "main", "index": 0 }]]
+    },
+    "解析 LLM 輸出": {
+      "main": [[{ "node": "查詢供應商", "type": "main", "index": 0 }]]
+    },
+    "查詢供應商": {
+      "main": [[{ "node": "查詢產品", "type": "main", "index": 0 }]]
+    },
+    "查詢產品": {
+      "main": [[{ "node": "整合查詢結果", "type": "main", "index": 0 }]]
+    },
+    "整合查詢結果": {
+      "main": [[{ "node": "Django 試算報價", "type": "main", "index": 0 }]]
+    },
+    "Django 試算報價": {
+      "main": [[{ "node": "回傳結果", "type": "main", "index": 0 }]]
+    }
+  }
+}
