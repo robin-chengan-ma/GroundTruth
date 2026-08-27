@@ -36,4 +36,5 @@ updated: 2026-08-27
 | --- | --- | --- | --- |
 | 2026-08-26 | 0fc63ae | Phase 1：Django 專案初始化、DB Schema、seed 假資料、完整 CRUD API（commit，尚未 push） | Claude |
 | 2026-08-27 | e5ece91 | Phase 2：n8n 環境架設、內部 API Key 認證、詢價試算主流程閉環（commit，尚未 push） | Claude |
+| 2026-08-27 | d94e932 | fix：Gemini 模型過期改用 gemini-3.6-flash，真實端到端驗證通過（commit，尚未 push） | Claude |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
