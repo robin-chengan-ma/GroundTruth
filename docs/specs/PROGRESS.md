@@ -62,4 +62,5 @@ updated: 2026-08-28
 | 2026-08-27 | 933c7c4 | Phase 3：供應商模糊比對案件核准後的 n8n 續傳串接、FR-2b 格式錯誤分流（已 push） | Claude |
 | 2026-08-27 | d9898e2 | docs：補上 933c7c4 推版紀錄（已 push） | Robin |
 | 2026-08-27 | d4fa4b2 | fix：修正 n8n Mask 遮罩節點未轉傳 user_id 導致續傳流程試算報價失敗（commit，尚未 push） | Robin |
+| 2026-08-28 | 1624b1a | Phase 4：企業式 JWT、權限收斂、簽核流程與 Vue 核心頁面（commit，尚未 push／部署） | Codex |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
