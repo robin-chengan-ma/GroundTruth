@@ -1,28 +1,82 @@
+from django.db.models import Q
 from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.procurement.models import Quote
 from lib.authentication import InternalApiKeyAuthentication
+from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.procurement import ApprovalRepository, QuoteRepository
 from schemas.procurement import ApprovalSerializer, QuoteSerializer
+from services.approval_routing_service import route_quote
+from services.approval_service import (
+    ApprovalConflictError,
+    ApprovalError,
+    claim_approval,
+    decide_approval,
+    withdraw_quote,
+)
 from services.hallucination_check_service import HallucinationCheckError, check_summary
 from services.inquiry_service import InquiryTriggerError, trigger_inquiry
 from services.quote_calculation_service import QuoteCalculationError, create_quote
 
 
-class QuoteViewSet(viewsets.ModelViewSet):
+class QuoteViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = QuoteSerializer
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return QuoteRepository.all()
+        queryset = QuoteRepository.all()
+        user = self.request.user
+        if user.role.role == "admin":
+            return queryset
+        if user.role.role == "employee":
+            return queryset.filter(user=user)
+        return queryset.filter(Q(approvals__role=user.role) | Q(user=user)).distinct()
+
+    @action(detail=True, methods=["post"])
+    def withdraw(self, request, pk=None):
+        try:
+            quote = withdraw_quote(pk, request.user)
+        except ApprovalConflictError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ApprovalError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(QuoteSerializer(quote).data)
 
 
-class ApprovalViewSet(viewsets.ModelViewSet):
+class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ApprovalSerializer
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return ApprovalRepository.all()
+        queryset = ApprovalRepository.all()
+        if self.request.user.role.role == "admin":
+            return queryset
+        return queryset.filter(role=self.request.user.role)
+
+    @action(detail=True, methods=["post"])
+    def claim(self, request, pk=None):
+        try:
+            approval = claim_approval(pk, request.user)
+        except ApprovalConflictError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ApprovalError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(ApprovalSerializer(approval).data)
+
+    @action(detail=True, methods=["post"])
+    def decide(self, request, pk=None):
+        try:
+            approval = decide_approval(pk, request.user, request.data.get("decision"))
+        except ApprovalConflictError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ApprovalError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(ApprovalSerializer(approval).data)
 
 
 class InquiryTriggerView(APIView):
@@ -32,15 +86,13 @@ class InquiryTriggerView(APIView):
     並原樣回傳 n8n 的最終結果。
     """
 
-    permission_classes = [permissions.AllowAny]
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         raw_text = request.data.get("raw_text", "")
-        user_id = request.data.get("user_id")
-        if user_id is None:
-            return Response({"detail": "user_id 為必填"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            result = trigger_inquiry(raw_text, user_id=user_id)
+            result = trigger_inquiry(raw_text, user_id=request.user.id)
         except InquiryTriggerError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response(result, status=status.HTTP_200_OK)
@@ -129,6 +181,7 @@ class QuoteHallucinationVerifyView(APIView):
             quote.ai_summary_text = summary_text
             quote.status = Quote.Status.PENDING_APPROVAL
             quote.save(update_fields=["ai_summary_text", "status"])
+            route_quote(quote)
             return Response({"passed": True}, status=status.HTTP_200_OK)
 
         return Response(

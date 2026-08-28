@@ -18,6 +18,7 @@ from apps.audit.models import AuditLog, ManualReviewQueue
 from apps.core.models import User
 from apps.procurement.models import Quote
 from repositories.core import UserRepository
+from services.approval_routing_service import route_quote
 from services.inquiry_resume_service import InquiryResumeError, trigger_resume
 from services.quote_summary_template import render_summary
 
@@ -114,6 +115,8 @@ def _decide_hallucination(review: ManualReviewQueue, decision: str) -> None:
     else:
         quote.status = Quote.Status.CANCELLED
     quote.save()
+    if decision == ManualReviewQueue.Decision.APPROVED:
+        route_quote(quote)
 
 
 def _decide_supplier_fuzzy_match(review: ManualReviewQueue, decision: str, supplier_id) -> None:

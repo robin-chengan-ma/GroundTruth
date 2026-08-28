@@ -17,4 +17,5 @@ urlpatterns = [
     path("masking/mask/", MaskTextView.as_view(), name="masking-mask"),
     path("masking/unmask/", UnmaskTextView.as_view(), name="masking-unmask"),
     path("masking/mask-amounts-only/", MaskAmountsOnlyView.as_view(), name="masking-mask-amounts-only"),
-] + router.urls
+    *router.urls,
+]

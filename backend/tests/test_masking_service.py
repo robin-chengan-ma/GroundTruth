@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 import pytest
 
 from apps.audit.models import ManualReviewQueue

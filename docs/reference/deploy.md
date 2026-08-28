@@ -1,12 +1,12 @@
 ---
 title: 部署 Reference
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # 部署 Reference
 
 > 只記現況，不保存敘事歷史；歷史與理由放 ADR。Docker Compose 一鍵啟動全服務是 Phase 7 範圍，
-> 這裡先記錄 Phase 2 為止各服務目前各自怎麼跑起來。
+> 這裡記錄 Phase 4 為止各服務目前各自怎麼跑起來。
 
 ## 執行平台
 
@@ -17,10 +17,19 @@ updated: 2026-08-27
 | 項目 | 內容 |
 | --- | --- |
 | 入口 | `backend/manage.py runserver` |
-| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`、`N8N_RESUME_WEBHOOK_URL`（FR-6a 供應商模糊比對案件核准後，Django 主動通知 n8n 續傳流程用；完整說明見 `backend/.env.example`） |
+| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`、`N8N_RESUME_WEBHOOK_URL`；`REFRESH_COOKIE_SECURE` 控制本機 HTTP／HTTPS Cookie Secure 屬性 |
 | 外部依賴 | 本機 PostgreSQL（Phase 1 起） |
-| Health Check | 尚未建立專用端點；`GET /api/v1/roles/` 回 200 可視為存活 |
-| 已知限制 | JWT 認證尚未套用（Phase 4）；CRUD 端點目前 `AllowAny` |
+| Health Check | 尚未建立專用端點；未帶 Token 呼叫 `GET /api/v1/auth/me/` 回 401 可確認 Django 路由存活，不代表 DB 與外部依賴完整健康 |
+| 已知限制 | 尚無專用健康檢查；Refresh Cookie 正式 HTTPS 環境必須設定 `REFRESH_COOKIE_SECURE=true` |
+
+## Vue 前端
+
+| 項目 | 內容 |
+| --- | --- |
+| 入口 | `frontend/src/main.ts`；本機開發於 `frontend/` 執行 `pnpm install`、`pnpm dev` |
+| Build／檢查 | `pnpm lint`、`pnpm test`、`pnpm type-check`、`pnpm build`；輸出位於 `frontend/dist/`，不提交 Git |
+| API 連線 | 開發環境由 Vite 將 `/api` 代理至 `http://127.0.0.1:8000`；瀏覽器請求攜帶 Refresh Cookie |
+| 外部依賴 | Django API；未連後端時登入頁仍可顯示，但無法完成登入與資料流程 |
 
 ## n8n
 
@@ -34,8 +43,7 @@ updated: 2026-08-27
 | Health Check | `GET http://localhost:5678/healthz` |
 | 目前無基礎設施 | 沒有另外的 basic auth／對外網址；只在本機 Docker 跑，正式對外使用前應補上驗證 |
 
-## 已知限制（Phase 2 為止）
+## 已知限制（Phase 4 為止）
 
 - 沒有 Docker Compose 統一一鍵啟動 Django + n8n + PostgreSQL + Vue（Phase 7）
-- n8n workflow 目前查詢供應商/產品用「名稱精確比對」（`SearchFilter`），還沒有 Phase 3 的遮罩/Token 化與模糊比對 fallback
-- `quotes/calculate/` 端點目前只回傳計算結果，不落地寫入 `Quote` 資料列（正式建單留待 Phase 3 幻覺驗證通過後）
+- Phase 4 的瀏覽器驗證使用 Vite 本機頁面，未串接同時啟動的 Django/n8n 做完整真實環境 E2E；API 流程由 pytest integration tests 驗證。

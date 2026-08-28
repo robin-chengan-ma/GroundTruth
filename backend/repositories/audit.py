@@ -6,7 +6,7 @@ class ManualReviewQueueRepository:
 
     @staticmethod
     def all():
-        return ManualReviewQueue.objects.select_related("quote", "supplier", "user").all()
+        return ManualReviewQueue.objects.select_related("quote", "supplier", "user").order_by("id")
 
     @staticmethod
     def unclaimed():
@@ -18,7 +18,7 @@ class AuditLogRepository:
 
     @staticmethod
     def all():
-        return AuditLog.objects.select_related("user", "quote").all()
+        return AuditLog.objects.select_related("user", "quote").order_by("id")
 
     @staticmethod
     def record(**kwargs):

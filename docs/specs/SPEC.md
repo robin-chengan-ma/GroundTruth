@@ -1,6 +1,6 @@
 ---
 title: 內部採購與簽核 AI Agent 系統
-updated: 2026-08-26
+updated: 2026-08-28
 owner: Robin
 ---
 
@@ -101,10 +101,13 @@ owner: Robin
 - FR-6b：複核案件的 Gmail 通知發送給所有管理員角色使用者（非綁定單一人），複核頁面提供認領機制（處理中／未處理／已處理，含認領人），避免多位管理員同時處理同一案件
 - FR-6c：管理員在複核佇列的每個決定（核准/駁回、認領）都需寫入稽核 log
 - FR-7：Django service 依金額判斷簽核層級並路由給對應簽核人，分三段門檻（小額 1 萬元以下、中額 1 萬～10 萬元、大額 10 萬元以上，門檻寫死在 Django 設定）
+- FR-7b：簽核層級的金額邊界明確定義為：small `≤ 10,000`、medium `> 10,000 且 ≤ 100,000`、large `> 100,000`，避免 10,000 與 100,000 落入重疊區間
 - FR-7a：路由邏輯依 `roles` 表的「簽核金額上限」欄位，找出上限 ≥ 該筆採購金額中上限最低的角色，將案件指派給該角色（寫入 `approvals.role_id`，建立當下不預先指定特定使用者）；若無角色上限足夠，路由給管理員角色（管理員角色固定金額上限無上限）
 - FR-8：n8n 透過 Gmail 節點通知該角色底下**所有**使用者（廣播，非單一人），附上簽核頁面連結
 - FR-8a：簽核佇列頁面提供認領機制：符合角色資格的使用者可認領案件，`approvals.approver_id` 於認領當下才寫入（認領前為 null）；已認領案件對同角色其他使用者顯示「處理中／已被 OOO 認領」，避免多人同時處理同一筆案件造成衝突決議——與 FR-6b 複核佇列採同一套廣播＋認領模式
 - FR-9：簽核人認領案件後，於 Vue 前端查看 AI 摘要與原始數據對照（含 FR-4a 的價格異常標記，若有），執行核准/駁回
+- FR-9a：管理員可查看全部簽核案件，但只有案件依 FR-7a 路由至 `admin` 角色時才能認領與決議；不得跨角色代簽。人工複核佇列仍維持僅管理員處理
+- FR-9b：申請人可查看自己建立的採購單；已進入 `pending_approval` 的案件可由原申請人撤回，狀態改為 `cancelled` 並寫入稽核 log。已核准、已駁回或已取消案件僅供查看，不得直接修改或實體刪除；內容有誤時須重新提出詢價
 - FR-10：簽核核准後，Django 將 `inventory.stock_qty` 增加該筆採購的 `quantity`（視同貨物已入庫，demo 系統不另做入庫確認步驟）；n8n 觸發後續自動化寄送確認信。供應商的成交狀態（最後成交時間等）不寫入 `suppliers` 表額外欄位，需要時直接查詢 `quotes` 表即時算出
 - FR-10a：`inventory.stock_qty` 異動後（不論因核准增加或管理員手動調整），即時檢查是否低於 `threshold`；低於門檻且該產品目前沒有 `pending` 狀態的 `purchase_suggestions` 時，自動新增一筆
 - FR-10b：`quotes` 表提供 `source_suggestion_id`（nullable，外鍵指向 `purchase_suggestions.id`），若此次詢價是回應某筆採購建議而發起；該筆採購核准後，連動將對應 `purchase_suggestions.status` 標記為 `processed`
@@ -118,7 +121,7 @@ owner: Robin
 - Phase 1：Django 專案初始化與資料庫 Schema（CRM＋ERP＋資安三塊）＋ 灌假資料 ＋ 完整 CRUD API
 - Phase 2：n8n 環境架設，打通主流程閉環（Webhook → LLM 解析 → Django 查資料 → Django 試算 → 回傳結果）
 - Phase 3：資安遮罩層（供應商清單比對 + Token 化 + 分情境 fallback）與幻覺驗證機制
-- Phase 4：Vue 前端核心頁面（詢價輸入、採購清單、簽核頁）
+- Phase 4：企業式 JWT 登入與角色權限收斂、簽核路由／認領／決議／撤回，以及 Vue 前端核心頁面（登入、詢價輸入、採購清單、一般簽核、管理員人工複核）
 - Phase 5：Vue 前端補齊（供應商管理、庫存/採購建議、稽核 log 查詢）＋ 簡化角色權限
 - Phase 6：Gmail 整合（簽核通知信；可選監看信箱自動解析報價信）
 - Phase 7：測試（Django service 層單元測試、API 整合測試）＋ Docker Compose 一鍵啟動
@@ -171,10 +174,12 @@ owner: Robin
 
 **功能性需求**
 - FR-1：一般員工僅能建立採購申請
+- FR-1a：一般員工可查看自己建立的採購單及狀態，並依系統主流程 FR-9b 撤回待簽核案件；不得查看他人案件或直接修改／刪除正式採購單
 - FR-2：簽核人僅能看到自己權限範圍內的案件（依所屬角色的「簽核金額上限」路由，詳見系統主流程 FR-7a）
 - FR-3：管理員可見全部資料，並可查閱稽核 log
 - FR-4：角色正規化為獨立 `roles` 表（`id`、`role`、`approval_amount_limit`），`users` 以 `role_id` 外鍵參照；角色不再限於員工/簽核人/管理員 3 種固定值，`employee`、`admin` 為保留角色代碼，其餘可依需要新增多種簽核相關角色（如額度層級不同的簽核人角色），各自帶固定金額上限；`admin` 固定金額上限無上限，`employee` 不參與簽核路由（詳見 `docs/ADR/discuss/db-schema.md`）
 - FR-5：JWT payload 僅放使用者 ID 與角色代碼，不放簽核金額上限等易變資料，金額上限每次請求即時查資料庫
+- FR-6：前端登入使用 Email＋Password；access token 採短效期並僅保存在前端記憶體，refresh token 以 HttpOnly、SameSite Cookie 保存並啟用 rotation 與撤銷機制。登入失敗不得透露 Email 是否存在
 
 **非功能性需求**
 - NFR-1：安全 — 不適用（demo 系統，非高流量情境）

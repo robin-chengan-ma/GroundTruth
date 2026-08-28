@@ -164,7 +164,7 @@ def _best_match(raw_text: str, name: str) -> tuple:
     for width in range(max(1, name_len - 1), name_len + 3):
         if width > len(raw_text):
             continue
-        for start in range(0, len(raw_text) - width + 1):
+        for start in range(len(raw_text) - width + 1):
             segment = raw_text[start:start + width]
             matcher = difflib.SequenceMatcher(None, segment, name)
             ratio = matcher.ratio()

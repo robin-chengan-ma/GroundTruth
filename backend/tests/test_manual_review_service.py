@@ -1,10 +1,10 @@
 from decimal import Decimal
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
 from apps.audit.models import AuditLog, ManualReviewQueue
-from apps.core.models import Role, User
+from apps.core.models import User
 from apps.crm.models import Supplier
 from apps.procurement.models import Quote
 from services import manual_review_service as svc

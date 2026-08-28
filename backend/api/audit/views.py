@@ -3,7 +3,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api.core.permissions import IsBusinessAdmin
 from lib.authentication import InternalApiKeyAuthentication
+from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.audit import AuditLogRepository, ManualReviewQueueRepository
 from schemas.audit import AuditLogSerializer, ManualReviewQueueSerializer
 from services.manual_review_service import (
@@ -12,11 +14,18 @@ from services.manual_review_service import (
     claim_review,
     decide_review,
 )
-from services.masking_service import MaskingError, mask_amounts_only, mask_text, unmask_text
+from services.masking_service import (
+    MaskingError,
+    mask_amounts_only,
+    mask_text,
+    unmask_text,
+)
 
 
-class ManualReviewQueueViewSet(viewsets.ModelViewSet):
+class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ManualReviewQueueSerializer
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [IsBusinessAdmin]
 
     def get_queryset(self):
         return ManualReviewQueueRepository.all()
@@ -24,12 +33,8 @@ class ManualReviewQueueViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def claim(self, request, pk=None):
         """FR-6b：認領案件，避免多位管理員同時處理同一案件（衝突回 409）。"""
-        user_id = request.data.get("user_id")
-        if user_id is None:
-            return Response({"detail": "user_id 為必填"}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
-            review = claim_review(pk, user_id)
+            review = claim_review(pk, request.user.id)
         except ManualReviewConflictError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ManualReviewError as exc:
@@ -40,15 +45,14 @@ class ManualReviewQueueViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def decide(self, request, pk=None):
         """FR-6a／FR-6c：決議案件（核准/駁回），依 review_type 分流，並寫入稽核 log。"""
-        user_id = request.data.get("user_id")
         decision = request.data.get("decision")
         supplier_id = request.data.get("supplier_id")
 
-        if user_id is None or decision is None:
-            return Response({"detail": "user_id、decision 為必填"}, status=status.HTTP_400_BAD_REQUEST)
+        if decision is None:
+            return Response({"detail": "decision 為必填"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            review = decide_review(pk, user_id, decision, supplier_id=supplier_id)
+            review = decide_review(pk, request.user.id, decision, supplier_id=supplier_id)
         except ManualReviewConflictError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ManualReviewError as exc:
@@ -62,11 +66,13 @@ class ManualReviewQueueViewSet(viewsets.ModelViewSet):
         return Response(data, status=status.HTTP_200_OK)
 
 
-class AuditLogViewSet(viewsets.ModelViewSet):
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """稽核 log 依 SPEC 為系統寫入紀錄；Phase 1 先提供完整 CRUD 供測試/管理用，
     後續 Phase 若需限制為唯讀，於 API 層加 http_method_names 即可。"""
 
     serializer_class = AuditLogSerializer
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [IsBusinessAdmin]
 
     def get_queryset(self):
         return AuditLogRepository.all()

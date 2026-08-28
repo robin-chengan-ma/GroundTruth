@@ -1,38 +1,60 @@
 ---
 title: API Reference
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # API Reference
 
 > 技術參考文件，跟著程式碼異動更新，不是決策紀錄（決策放 `docs/ADR/discuss/`）也不是產品規格
-> （放 `docs/specs/SPEC.md`）。Phase 1 的 10 個 CRUD 資源（roles/users/suppliers/products/
-> inventory/purchase-suggestions/quotes/approvals/manual-review-queue/audit-logs）為標準 DRF
-> ModelViewSet CRUD，不逐一列出；這裡只記錄 Phase 2、Phase 3 新增、行為不是單純 CRUD 的端點。
+> （放 `docs/specs/SPEC.md`）。Phase 4 起 API 已依資源套用 JWT 與角色權限；工作流程資源改為
+> 唯讀清單／明確 action，不再允許用通用 CRUD 任意改寫正式狀態。
 
 ## 認證方式
 
 | 呼叫方 | 端點範圍 | 認證方式 |
 | --- | --- | --- |
-| Vue 前端 | 一般 CRUD、`inquiries/trigger/`、`manual-review-queue/{id}/claim/decide/` | Phase 1-3 暫開放 `AllowAny`；JWT 認證於 Phase 4 套用（FR-1a） |
+| Vue 前端 | `/auth/*`、一般資源、`inquiries/trigger/`、簽核／複核 action | Access Token 放記憶體並以 `Authorization: Bearer <token>` 傳送；Refresh Token 僅存 HttpOnly、SameSite=Lax Cookie，refresh/logout 另驗證 `X-CSRFToken` |
 | n8n | `quotes/calculate/`、`masking/mask/`、`masking/mask-amounts-only/`、`masking/unmask/`、`quotes/verify-hallucination/` | 固定 API Key，自訂 header `X-Internal-Api-Key`，需與 `INTERNAL_API_KEY` 環境變數一致（FR-1a） |
 | Django（主動呼叫方） | n8n 的 `N8N_RESUME_WEBHOOK_URL`（`POST .../webhook/inquiry/resume`） | 固定 API Key，同上 header；由 Django 主動發起，不是被呼叫端，見 `docs/ADR/discuss/main-flow.md` |
+
+## Vue 登入與 Session
+
+| Method / Route | 認證 | Request | Response／規則 |
+| --- | --- | --- | --- |
+| `POST /api/v1/auth/login/` | 無 | `{"email":"employee@example.com","password":"example-only"}` | 200 回 `access` 與使用者資料；設定 Refresh HttpOnly Cookie 與 CSRF Cookie。帳號不存在或密碼錯誤統一回 401 `帳號或密碼錯誤` |
+| `POST /api/v1/auth/refresh/` | Refresh Cookie + `X-CSRFToken` | 無 | 200 回新 `access` 並 rotation Refresh Cookie；舊 Token 立即撤銷。CSRF 錯誤回 403，Token 缺漏／失效／重放回 401 |
+| `POST /api/v1/auth/logout/` | Refresh Cookie + `X-CSRFToken` | 無 | 撤銷目前 Refresh Session、刪除 Cookie，回 204；無 Cookie 時維持冪等 |
+| `GET /api/v1/auth/me/` | Bearer Access Token | 無 | 200 回 `id/name/email/role`；無效或過期 Token 回 401 |
+
+Access Token 有效 15 分鐘，Refresh Token 有效 1 天。資料庫只保存 Refresh Token 的 SHA-256 雜湊與
+rotation／撤銷狀態，不保存 Token 明文。
+
+## 前端資源權限
+
+| 資源 | 可視範圍 | 可寫入範圍 |
+| --- | --- | --- |
+| roles、users | admin | admin CRUD；密碼寫入時由後端雜湊 |
+| suppliers、products、inventory、purchase-suggestions | 已登入使用者 | 僅 admin 可用通用 CRUD 寫入 |
+| quotes | employee 僅本人；簽核人可見路由至其角色的案件；admin 可見全部 | 通用 API 唯讀；本人僅能呼叫 `withdraw` 撤回待簽核案件 |
+| approvals | 簽核人可見路由至其角色及本人認領案件；admin 可見全部 | 通用 API 唯讀；只能用 `claim`／`decide` action，且不得跨角色代簽 |
+| manual-review-queue、audit-logs | admin | 複核僅 `claim`／`decide`；audit logs 全部唯讀 |
 
 ## POST /api/v1/inquiries/trigger/
 
 FR-1：接收自然語言詢價文字，同步呼叫 n8n Webhook（`N8N_INQUIRY_WEBHOOK_URL`），把 n8n 最終回應原樣回傳。
 
-`user_id`：詢價發起人。Vue＋JWT 使用者驗證留待 Phase 4，Phase 3 起先由呼叫端明確帶入（見
-`docs/ADR/discuss/main-flow.md`），一路傳給 n8n → `quotes/calculate/` 用來建立 `Quote` 資料列。
+詢價發起人固定取自 JWT 使用者，呼叫端傳入的 `user_id` 會被忽略，避免冒用其他人身分。
 
 **Request**
 ```json
-{ "raw_text": "幫我訂20個A產品，跟優品科技拿貨", "user_id": 1 }
+{ "raw_text": "幫我訂20個A產品，跟優品科技拿貨" }
 ```
 
 **Response（200）**：原樣透傳 n8n workflow 的最終輸出。
 
-**Response（400）**：`user_id` 缺漏。
+**Response（400）**：`raw_text` 為空。
+
+**Response（401）**：Bearer Access Token 缺漏或失效。
 
 **Response（502）**：n8n 連線失敗、逾時或回傳非 2xx。
 ```json
@@ -171,7 +193,7 @@ X-Internal-Api-Key: <INTERNAL_API_KEY>
 { "quote_id": 42, "summary_text": "優品科技採購A產品，數量20，單價1500，總金額30000元" }
 ```
 
-**Response（200，通過）**：`quotes.ai_summary_text` 寫入該摘要文字，`quotes.status` 進至 `pending_approval`（FR-7 簽核路由留待後續 Phase）。
+**Response（200，通過）**：`quotes.ai_summary_text` 寫入該摘要文字，`quotes.status` 進至 `pending_approval`，並建立一筆依金額門檻指派角色的 `approval`。
 ```json
 { "passed": true }
 ```
@@ -189,16 +211,14 @@ X-Internal-Api-Key: <INTERNAL_API_KEY>
 
 ## POST /api/v1/manual-review-queue/{id}/claim/
 
-FR-6b：管理員認領複核案件，避免多人同時處理同一案件。認領前 Vue 前端無 JWT 身分（留待 Phase 4），暫用 `user_id` 明確指定認領人；後端仍會驗證該使用者存在且角色為 `admin`（FR-6a：待複核佇列一律指派給管理員角色處理）。
+FR-6b：登入的管理員認領複核案件，避免多人同時處理同一案件；身分固定取自 JWT。
 
 **Request Body**
-```json
-{ "user_id": 3 }
-```
+無 Request Body。
 
 **Response（200）**：回傳更新後的 `manual_review_queue` 資料列（`status` 變為 `claimed`）。
 
-**Response（400）**：`user_id` 缺漏、找不到該使用者、或該使用者非管理員角色。
+**Response（401／403）**：未登入／非管理員。
 
 **Response（409）**：案件已被認領或已結案。
 
@@ -208,11 +228,11 @@ FR-6a／FR-6c：決議案件（核准／駁回），僅提供 SPEC 定義的有�
 
 **Request Body**
 ```json
-{ "user_id": 3, "decision": "approved" }
+{ "decision": "approved" }
 ```
 `review_type=supplier_fuzzy_match` 且核准時，若 `manual_review_queue.supplier_id` 尚未預填（多筆候選或長度不安全的情況），必須額外帶 `supplier_id` 明確指定：
 ```json
-{ "user_id": 3, "decision": "approved", "supplier_id": 7 }
+{ "decision": "approved", "supplier_id": 7 }
 ```
 
 **核准（`hallucination_mismatch`）**：丟棄 LLM 生成摘要，改用 `services/quote_summary_template.py` 的固定樣板依真實數字組出文字寫回 `quotes.ai_summary_text`，`quotes.status` 進至 `pending_approval`。
@@ -222,6 +242,25 @@ FR-6a／FR-6c：決議案件（核准／駁回），僅提供 SPEC 定義的有�
 
 **Response（200）**：回傳更新後的 `manual_review_queue` 資料列（`status` 變為 `resolved`）。核准 `supplier_fuzzy_match` 案件時，回應多一個 `resume_triggered`（布林值，非 DB 欄位）：`true` 表示已成功通知 n8n 續傳，`false` 表示通知失敗（決議本身仍然成功，但需要人工確認 n8n 那邊是否要手動觸發）。
 
-**Response（400）**：`user_id`／`decision` 缺漏、`decision` 非 `approved`／`rejected`、或核准模糊比對案件卻缺少可用的 `supplier_id`。
+**Response（400）**：`decision` 缺漏、`decision` 非 `approved`／`rejected`、或核准模糊比對案件卻缺少可用的 `supplier_id`。
+
+**Response（401／403）**：未登入／非管理員。
 
 **Response（409）**：案件尚未認領、已結案，或非本人認領。
+
+## 採購單與簽核 Action
+
+### POST /api/v1/quotes/{id}/withdraw/
+
+本人可撤回狀態為 `pending_approval` 的採購單。成功時 Quote 與 Approval 同步改為 `cancelled` 並寫入
+Audit Log；非本人回 400，案件不存在回 404，已結案或狀態不符回 409。
+
+### POST /api/v1/approvals/{id}/claim/
+
+登入使用者只能認領路由角色與自身角色相同、仍為 `pending` 且尚未被認領的案件。admin 只能認領
+路由到 admin 的大額案件，不能跨角色代簽。成功回 200；資格不符回 400；已認領／結案回 409。
+
+### POST /api/v1/approvals/{id}/decide/
+
+只有已認領該案件的使用者可送出 `{"decision":"approved"}` 或 `{"decision":"rejected"}`。成功時
+Approval 與 Quote 同步轉為 approved／rejected 並寫入 Audit Log；無效決議回 400，非認領者或已結案回 409。

@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # 開發進度
@@ -36,17 +36,21 @@ updated: 2026-08-27
 | 2026-08-27 | FR-2b | 補上 FR-2b 第三種遮罩失敗情境（供應商比對成功但其他欄位如金額/數量格式無法解析→即時回覆請求修正格式，不進複核佇列）：主流程與續傳子流程的「解析 LLM 輸出」節點皆改為 try/catch＋`quantity` 數字格式驗證，不再對格式錯誤直接 throw；各新增一個 IF 分流節點與對應回覆節點 | Claude | 完成 | 這段原本重讀 SPEC.md 才發現漏做（FR-2b 三個分支只做了前兩個），補齊後 workflow 節點數 33→37；本機用 mock 驗證主流程與續傳流程的格式錯誤分支皆正確回覆「詢價內容格式無法解析，請確認數量/金額等欄位後重新輸入」，且不寫入複核佇列，其餘 5 種既有分支重新跑過一遍確認未受影響；詳見 `docs/ADR/debug/n8n-workflow-authoring-issues.md` |
 | 2026-08-27 | 使用者 | 真實 `GEMINI_API_KEY` 端到端實測（Django + Docker n8n + 真實 Gemini + seed 資料）：正常成功／查無供應商／模糊比對／格式無法解析 4 種分支皆通過，真實摘要文字格式與 mock 假設一致 | Robin | 完成 | 續傳流程實測時發現一個 bug：主流程「Mask 遮罩」節點沒有把 `user_id` 轉傳給 `masking/mask/`，導致 `manual_review_queue.requester` 恆為 `null`，核准後續傳流程的 `quotes/calculate/` 因此收到空的 `user_id` 回 400；已修正並重新推送 workflow，詳見 `docs/ADR/debug/n8n-workflow-authoring-issues.md` |
 | 2026-08-27 | 使用者 | 修正後重新實測供應商模糊比對→核准→續傳完整流程 | Robin | 完成 | `manual_review_queue.requester` 正確帶值（不再是 `null`），claim/decide/續傳皆成功，n8n Executions 顯示續傳子流程完整跑到「回覆：成功（續傳）」分支（真實 Gemini 摘要通過幻覺驗證），確認修復生效 |
+| 2026-08-28 | Phase 4 基線 | 建立可重現測試環境與 Ruff baseline（`requirements-dev.txt`、`pyproject.toml`、隔離測試設定） | Codex | 完成 | 測試原始碼提交；`node_modules`、coverage、build、cache 等產物排除於 Git |
+| 2026-08-28 | FR-1a | email/password 登入、Access/Refresh JWT rotation、撤銷、登出、CSRF 與角色授權 | Codex | 完成 | Access 15 分鐘僅存前端記憶體；Refresh 1 天 HttpOnly SameSite Cookie；資料庫只存雜湊；管理員建立／更新帳號會雜湊密碼 |
+| 2026-08-28 | FR-7／FR-7a／FR-8／FR-8a | 金額路由、角色認領、核准／駁回、admin 禁止跨角色代簽 | Codex | 完成 | 小額 ≤10,000；中額 >10,000 且 ≤100,000；大額 >100,000 路由 admin；狀態與 Audit Log 同步 |
+| 2026-08-28 | Phase 4 權限 | 工作流程 API 改為唯讀清單＋明確 action，套用本人／路由角色／admin 可視範圍 | Codex | 完成 | employee 僅見本人 Quote；申請人可撤回 pending_approval，正式案件不可通用修改／刪除 |
+| 2026-08-28 | Phase 4 前端 | Vue 登入、詢價、採購清單、簽核佇列、人工複核頁與共用狀態呈現 | Codex | 完成 | 響應式桌面／390px 畫面與 browser console 已檢查；當次未啟動 Django，因此屬 UI 驗證，不宣稱真實環境 E2E |
+| 2026-08-28 | Phase 4 測試 | Backend pytest/coverage、Ruff、Migration check；Frontend lint/test/type-check/build | Codex | 完成 | Backend 153 tests、整體 95%；JWT／Refresh／簽核路由 100%。Frontend 4 tests；lint、type-check、build 全通過 |
 
 ## 已知待補（非本次 Phase 範圍，記錄避免遺漏）
 
-- JWT 認證（FR-1a 前半，使用者對 Vue 前端）：Phase 4 範圍；`inquiries/trigger/`、`manual-review-queue/{id}/claim/decide/` 目前暫用 `AllowAny`
-- API 目前僅測試 CRUD 正確性，尚未針對 FR 業務規則（如金額門檻、狀態機轉換限制）撰寫驗證測試，將於對應 Phase 補上
 - Django 版本：SPEC.md 標註 6.x，但目前 PyPI 最新穩定版為 5.2.x（6.0 尚未釋出），本次以 5.2 落地，待 Django 6.0 正式發布後再評估升級
 - 以下情境的邏輯本身皆有 100% 單元測試覆蓋，但尚未在真實環境（真實 Gemini + 真實 n8n + 真實 Django）端到端跑過一次，原因是這些情境較難用真實 LLM 刻意觸發，非阻擋 Phase 3 完成的問題，記錄供未來需要更完整實測時參考：
   - 幻覺驗證失敗分支（`hallucination_mismatch`）——真實 Gemini 至今每次摘要都準確，未曾實際觸發過
   - 幻覺驗證失敗案件的 claim/decide 核准（套用系統樣板）／駁回（Quote 轉 `cancelled`）
   - 供應商模糊比對案件的駁回（rejected）路徑
-- FR-7／FR-7a 簽核路由（`approval_routing_service.py`，AGENTS.md 已列入 100% 覆蓋率要求）尚未實作：`manual-review-queue/{id}/decide/` 核准後 Quote 進入 `pending_approval` 狀態即停止，尚無自動指派簽核角色的邏輯
+- Phase 4 尚未與同時啟動的 Django + n8n + PostgreSQL 做瀏覽器真實環境 E2E；目前以後端 API integration tests、前端元件測試及 Vite 瀏覽器 UI 檢查分別驗證。
 
 ## 推版紀錄
 

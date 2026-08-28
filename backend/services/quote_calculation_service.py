@@ -114,5 +114,5 @@ def _calculate_price_deviation(supplier_id, product_id, current_unit_price):
     if avg_price == 0:
         return None
 
-    deviation = (current_unit_price - avg_price) / avg_price * Decimal("100")
+    deviation = (current_unit_price - avg_price) / avg_price * Decimal(100)
     return deviation.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

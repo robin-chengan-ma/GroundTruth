@@ -5,7 +5,12 @@ import pytest
 from apps.audit.models import ManualReviewQueue
 from apps.core.models import User
 from apps.procurement.models import Quote
+from services.authentication_service import issue_token_pair
 
+
+def bearer(user):
+    access, _, _ = issue_token_pair(user)
+    return f"Bearer {access}"
 
 # ---- masking/mask/、masking/unmask/ ----
 
@@ -92,7 +97,7 @@ def test_verify_hallucination_quote_not_found(api_client, settings):
 
 
 @pytest.mark.django_db
-def test_verify_hallucination_passes_updates_quote(api_client, verify_quote, settings):
+def test_verify_hallucination_passes_updates_quote(api_client, verify_quote, role_admin, settings):
     settings.INTERNAL_API_KEY = "test-internal-key"
     summary = f"{verify_quote.supplier.name}採購{verify_quote.product.name}，數量20，單價1500，總金額30000元"
     resp = api_client.post(
@@ -153,42 +158,53 @@ def review_for_claim(db, verify_quote):
 @pytest.mark.django_db
 def test_claim_action_success(api_client, review_for_claim, review_admin):
     resp = api_client.post(
-        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", {"user_id": review_admin.id},
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/",
+        HTTP_AUTHORIZATION=bearer(review_admin),
     )
     assert resp.status_code == 200
     assert resp.data["status"] == "claimed"
 
 
 @pytest.mark.django_db
-def test_claim_action_missing_user_id(api_client, review_for_claim):
+def test_claim_action_requires_login(api_client, review_for_claim):
     resp = api_client.post(f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", {})
-    assert resp.status_code == 400
+    assert resp.status_code == 401
 
 
 @pytest.mark.django_db
 def test_claim_action_double_claim_conflicts(api_client, review_for_claim, review_admin):
-    api_client.post(f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", {"user_id": review_admin.id})
+    authorization = bearer(review_admin)
+    api_client.post(
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", HTTP_AUTHORIZATION=authorization
+    )
     resp = api_client.post(
-        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", {"user_id": review_admin.id},
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", HTTP_AUTHORIZATION=authorization,
     )
     assert resp.status_code == 409
 
 
 @pytest.mark.django_db
 def test_decide_action_missing_fields(api_client, review_for_claim, review_admin):
-    api_client.post(f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", {"user_id": review_admin.id})
+    authorization = bearer(review_admin)
+    api_client.post(
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", HTTP_AUTHORIZATION=authorization
+    )
     resp = api_client.post(
-        f"/api/v1/manual-review-queue/{review_for_claim.id}/decide/", {"user_id": review_admin.id},
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/decide/", HTTP_AUTHORIZATION=authorization,
     )
     assert resp.status_code == 400
 
 
 @pytest.mark.django_db
 def test_decide_action_approved_advances_quote(api_client, review_for_claim, review_admin, verify_quote):
-    api_client.post(f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", {"user_id": review_admin.id})
+    authorization = bearer(review_admin)
+    api_client.post(
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", HTTP_AUTHORIZATION=authorization
+    )
     resp = api_client.post(
         f"/api/v1/manual-review-queue/{review_for_claim.id}/decide/",
-        {"user_id": review_admin.id, "decision": "approved"},
+        {"decision": "approved"},
+        HTTP_AUTHORIZATION=authorization,
     )
     assert resp.status_code == 200
     assert resp.data["status"] == "resolved"
@@ -201,6 +217,7 @@ def test_decide_action_approved_advances_quote(api_client, review_for_claim, rev
 def test_decide_action_not_claimed_conflicts(api_client, review_for_claim, review_admin):
     resp = api_client.post(
         f"/api/v1/manual-review-queue/{review_for_claim.id}/decide/",
-        {"user_id": review_admin.id, "decision": "approved"},
+        {"decision": "approved"},
+        HTTP_AUTHORIZATION=bearer(review_admin),
     )
     assert resp.status_code == 409

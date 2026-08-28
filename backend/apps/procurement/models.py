@@ -50,6 +50,7 @@ class Approval(models.Model):
         PENDING = "pending", "pending"
         APPROVED = "approved", "approved"
         REJECTED = "rejected", "rejected"
+        CANCELLED = "cancelled", "cancelled"
 
     quote = models.ForeignKey(Quote, on_delete=models.CASCADE, related_name="approvals", db_column="quote_id")
     role = models.ForeignKey(Role, on_delete=models.PROTECT, related_name="approvals", db_column="role_id")
@@ -65,6 +66,9 @@ class Approval(models.Model):
 
     class Meta:
         db_table = "approvals"
+        constraints = [
+            models.UniqueConstraint(fields=["quote"], name="approvals_quote_unique"),
+        ]
 
     def __str__(self):
         return f"Approval#{self.pk} quote={self.quote_id} ({self.status})"

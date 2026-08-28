@@ -9,7 +9,7 @@ class RoleRepository:
 
     @staticmethod
     def all():
-        return Role.objects.all()
+        return Role.objects.order_by("id")
 
     @staticmethod
     def get(pk):
@@ -21,7 +21,7 @@ class UserRepository:
 
     @staticmethod
     def all():
-        return User.objects.select_related("role").all()
+        return User.objects.select_related("role").order_by("id")
 
     @staticmethod
     def get(pk):

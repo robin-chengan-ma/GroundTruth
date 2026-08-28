@@ -6,7 +6,7 @@ class SupplierRepository:
 
     @staticmethod
     def all():
-        return Supplier.objects.all()
+        return Supplier.objects.order_by("id")
 
     @staticmethod
     def get(pk):

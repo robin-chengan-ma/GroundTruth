@@ -20,4 +20,5 @@ urlpatterns = [
     path("inquiries/trigger/", InquiryTriggerView.as_view(), name="inquiry-trigger"),
     path("quotes/calculate/", QuoteCalculationView.as_view(), name="quote-calculate"),
     path("quotes/verify-hallucination/", QuoteHallucinationVerifyView.as_view(), name="quote-verify-hallucination"),
-] + router.urls
+    *router.urls,
+]

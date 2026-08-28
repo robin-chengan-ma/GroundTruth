@@ -20,6 +20,7 @@ lib64/
 # 不要被上面給虛擬環境用的通用 lib/ 規則誤擋掉。
 !backend/lib/
 !backend/lib/**
+backend/lib/__pycache__/
 parts/
 sdist/
 var/
@@ -54,6 +55,11 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+frontend/coverage/
+frontend/dist/
+frontend/node_modules/
+.pnpm-store/
+frontend/*.tsbuildinfo
 
 # Translations
 *.mo

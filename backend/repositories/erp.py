@@ -6,7 +6,7 @@ class ProductRepository:
 
     @staticmethod
     def all():
-        return Product.objects.all()
+        return Product.objects.order_by("id")
 
     @staticmethod
     def get(pk):
@@ -18,7 +18,7 @@ class InventoryRepository:
 
     @staticmethod
     def all():
-        return Inventory.objects.select_related("product").all()
+        return Inventory.objects.select_related("product").order_by("id")
 
     @staticmethod
     def get(pk):
@@ -36,7 +36,7 @@ class PurchaseSuggestionRepository:
 
     @staticmethod
     def all():
-        return PurchaseSuggestion.objects.select_related("product").all()
+        return PurchaseSuggestion.objects.select_related("product").order_by("id")
 
     @staticmethod
     def has_pending_for_product(product_id) -> bool:

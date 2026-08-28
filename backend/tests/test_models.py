@@ -1,4 +1,5 @@
 import pytest
+from django.db import IntegrityError
 
 from apps.core.models import Role
 from apps.crm.models import Supplier
@@ -19,7 +20,7 @@ def test_user_created_with_role(user, role_employee):
 
 @pytest.mark.django_db
 def test_role_unique_constraint(role_employee):
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         Role.objects.create(role="employee")
 
 
@@ -33,7 +34,7 @@ def test_supplier_default_tier():
 def test_inventory_one_to_one(product):
     inv = Inventory.objects.create(product=product, stock_qty=10, threshold=5)
     assert inv.product == product
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         Inventory.objects.create(product=product, stock_qty=1, threshold=1)
 
 

@@ -24,6 +24,22 @@ def role_admin(db):
 
 
 @pytest.fixture
+def admin_user(db, role_admin):
+    return User.objects.create(
+        name="Test Admin",
+        email="test.admin@groundtruth.demo",
+        password="hashed-not-tested-here",
+        role=role_admin,
+    )
+
+
+@pytest.fixture
+def admin_api_client(api_client, admin_user):
+    api_client.force_authenticate(user=admin_user)
+    return api_client
+
+
+@pytest.fixture
 def user(db, role_employee):
     return User.objects.create(
         name="Test User",

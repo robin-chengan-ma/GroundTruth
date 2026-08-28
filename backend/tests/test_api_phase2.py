@@ -2,6 +2,13 @@ from unittest.mock import patch
 
 import pytest
 
+from services.authentication_service import issue_token_pair
+
+
+def bearer(user):
+    access, _, _ = issue_token_pair(user)
+    return f"Bearer {access}"
+
 
 @pytest.mark.django_db
 @patch("api.procurement.views.trigger_inquiry")
@@ -9,16 +16,17 @@ def test_inquiry_trigger_endpoint_success(mock_trigger, api_client, user):
     mock_trigger.return_value = {"status": "ok"}
     resp = api_client.post(
         "/api/v1/inquiries/trigger/",
-        {"raw_text": "幫我訂50個A產品，跟X供應商拿貨", "user_id": user.id},
+        {"raw_text": "幫我訂50個A產品，跟X供應商拿貨"},
+        HTTP_AUTHORIZATION=bearer(user),
     )
     assert resp.status_code == 200
     assert resp.data == {"status": "ok"}
 
 
 @pytest.mark.django_db
-def test_inquiry_trigger_endpoint_missing_user_id(api_client):
+def test_inquiry_trigger_endpoint_requires_login(api_client):
     resp = api_client.post("/api/v1/inquiries/trigger/", {"raw_text": "test"})
-    assert resp.status_code == 400
+    assert resp.status_code == 401
 
 
 @pytest.mark.django_db
@@ -27,7 +35,11 @@ def test_inquiry_trigger_endpoint_upstream_failure(mock_trigger, api_client, use
     from services.inquiry_service import InquiryTriggerError
 
     mock_trigger.side_effect = InquiryTriggerError("詢價流程觸發失敗，請稍後再試")
-    resp = api_client.post("/api/v1/inquiries/trigger/", {"raw_text": "test", "user_id": user.id})
+    resp = api_client.post(
+        "/api/v1/inquiries/trigger/",
+        {"raw_text": "test"},
+        HTTP_AUTHORIZATION=bearer(user),
+    )
     assert resp.status_code == 502
 
 
@@ -95,16 +107,16 @@ def test_quote_calculate_wrong_key_rejected(api_client, product, supplier, user,
 
 
 @pytest.mark.django_db
-def test_supplier_search_by_name(api_client, supplier):
-    resp = api_client.get(f"/api/v1/suppliers/?search={supplier.name}")
+def test_supplier_search_by_name(api_client, supplier, user):
+    resp = api_client.get(f"/api/v1/suppliers/?search={supplier.name}", HTTP_AUTHORIZATION=bearer(user))
     assert resp.status_code == 200
     assert resp.data["count"] == 1
     assert resp.data["results"][0]["id"] == supplier.id
 
 
 @pytest.mark.django_db
-def test_product_search_by_name(api_client, product):
-    resp = api_client.get(f"/api/v1/products/?search={product.name}")
+def test_product_search_by_name(api_client, product, user):
+    resp = api_client.get(f"/api/v1/products/?search={product.name}", HTTP_AUTHORIZATION=bearer(user))
     assert resp.status_code == 200
     assert resp.data["count"] == 1
     assert resp.data["results"][0]["id"] == product.id

@@ -3,8 +3,6 @@ from decimal import Decimal
 import pytest
 
 from apps.audit.models import ManualReviewQueue
-from apps.crm.models import Supplier
-from apps.erp.models import Product
 from apps.procurement.models import Quote
 from services import hallucination_check_service as svc
 

@@ -6,7 +6,7 @@ class QuoteRepository:
 
     @staticmethod
     def all():
-        return Quote.objects.select_related("user", "supplier", "product").all()
+        return Quote.objects.select_related("user", "supplier", "product").order_by("id")
 
     @staticmethod
     def get(pk):
@@ -25,7 +25,7 @@ class ApprovalRepository:
 
     @staticmethod
     def all():
-        return Approval.objects.select_related("quote", "role", "approver").all()
+        return Approval.objects.select_related("quote", "role", "approver").order_by("id")
 
     @staticmethod
     def unclaimed_for_role(role_id):

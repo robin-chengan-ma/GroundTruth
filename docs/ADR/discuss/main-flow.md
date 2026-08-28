@@ -201,3 +201,24 @@
 - `config/settings.py`／`.env.example`：新增 `N8N_RESUME_WEBHOOK_URL`。
 - `n8n/workflows/inquiry-flow.json`：新增「續傳子流程」14 個節點（`Webhook 續傳詢價` 起始），節點數 19→33，本機驗證過程與發現的 bug 見 `docs/ADR/debug/n8n-workflow-authoring-issues.md`。
 - `docs/reference/api.md`：補上新端點與 `decide` 回應新增的 `resume_triggered` 欄位。
+
+## 2026-08-27 [標籤：AI 提案／使用者確認] Phase 4 簽核邊界、撤回與管理員代簽規則
+
+**狀態**：accepted
+
+**背景**：Phase 4 開工前需消除簽核門檻在 10,000／100,000 的重疊，並定義正式 Quote 能否修改、刪除、撤回，以及管理員「可查看全部」是否等同可跨角色代簽。
+
+**討論內容**：正式採購單若可直接修改或實體刪除，AI 摘要、幻覺驗證、Approval 與 Audit Log 將失去當時內容的一致性。考量本專案為廣度優先的模擬系統，採用「保留紀錄＋撤回後重送」即可，不擴張成完整 ERP 的草稿版本、作廢單、沖銷單或更正單。
+
+**決策**：
+1. 簽核層級精確區間為：small `≤ 10,000`、medium `> 10,000 且 ≤ 100,000`、large `> 100,000`。
+2. 一般簽核案件依 `roles.approval_amount_limit` 路由；管理員可查看全部案件，但只有路由至 `admin` 的案件才可認領與決議，不得跨角色代簽。
+3. Quote 建立後不得直接修改核心內容或實體刪除。原申請人可在 `pending_approval` 撤回，狀態改為 `cancelled` 並寫入 Audit Log；內容錯誤時重新詢價。
+4. 已核准、已駁回、已取消案件皆為唯讀；Phase 4 不新增草稿、作廢、沖銷或更正單模型。
+
+**理由**：明確的閉開區間可消除邊界歧義並對齊 `approver_10k`／`approver_100k` 的上限；限制正式單據改寫可保留 AI 驗證與簽核稽核鏈；限制管理員跨角色代簽可避免「看得到全部」被誤用為繞過簽核路由。
+
+**後果**：
+- Django 需新增簽核路由、認領、決議與 Quote 撤回 service／API，並以 transaction 防止認領、核准與撤回競態。
+- Vue 採購清單需依角色與資料歸屬顯示資料，只有符合條件的申請人看到撤回操作。
+- 撤回、認領與決議均需留下稽核紀錄。

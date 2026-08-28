@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models.functions import Now
 
 
 class Role(models.Model):
@@ -31,3 +32,55 @@ class User(models.Model):
 
     def __str__(self):
         return self.email
+
+    @property
+    def is_authenticated(self):
+        """讓業務 User 可套用 DRF 的 IsAuthenticated，不混用 Django auth User。"""
+        return True
+
+
+class RefreshSession(models.Model):
+    """Refresh Token rotation／撤銷狀態；只保存 Token 雜湊，不落地明文。"""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="refresh_sessions",
+        db_column="user_id",
+        db_comment="對應 users.id 的登入使用者",
+    )
+    jti = models.CharField(max_length=36, unique=True, db_comment="JWT 唯一識別碼，不含 Token 明文")
+    token_hash = models.CharField(
+        max_length=64, unique=True, db_comment="Refresh Token 的 SHA-256 雜湊，不儲存 Token 明文"
+    )
+    created_at = models.DateTimeField(
+        db_default=Now(), editable=False, db_comment="Session 建立時間（由資料庫產生）"
+    )
+    expires_at = models.DateTimeField(db_comment="Refresh Token 到期時間")
+    revoked_at = models.DateTimeField(null=True, blank=True, db_comment="撤銷時間；NULL 表示尚未撤銷")
+    replaced_by = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="replaced_by_id",
+        related_name="replaces",
+        db_comment="Rotation 後接替此 Token 的 refresh_sessions.id",
+    )
+
+    class Meta:
+        db_table = "refresh_sessions"
+        db_table_comment = "使用者 Refresh Token session，供 rotation、登出撤銷與重放防護使用"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(expires_at__gt=models.F("created_at")),
+                name="refresh_sessions_expiry_check",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["user", "expires_at"],
+                condition=models.Q(revoked_at__isnull=True),
+                name="refresh_user_active_idx",
+            ),
+        ]

@@ -1,6 +1,6 @@
 ---
 title: DB Schema
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # DB Schema
@@ -8,7 +8,8 @@ updated: 2026-08-27
 > 技術參考文件，跟著程式碼異動更新，不是決策紀錄（決策放 `docs/ADR/discuss/`）也不是產品規格（放
 > `docs/specs/SPEC.md`）。內容力求簡述；設計理由與討論過程見 `docs/ADR/discuss/db-schema.md`。
 >
-> **最新 Migration 編號**：`0001_initial`（core／crm／erp／procurement／audit 五個 app 各自的 0001_initial，Phase 1 建立，2026-08-26）；audit app 另有 `0002_alter_manualreviewqueue_quote`（Phase 3，2026-08-27，manual_review_queue.quote_id 改為 nullable）。
+> **最新 Migration 編號**：core `0002_refresh_session`、procurement `0002_approval_cancelled_unique`、
+> audit `0003_manualreviewqueue_requester`；crm／erp 維持 `0001_initial`。
 
 ## roles（角色）
 
@@ -28,6 +29,19 @@ updated: 2026-08-27
 | password | varchar(255) | 否 | — | | | | Django 內建雜湊儲存（PBKDF2），非明碼 |
 | role_id | bigint | 否 | — | | → roles.id | Index | |
 | created_at | timestamp | 否 | now() | | | | |
+
+## refresh_sessions（Refresh Token Session）
+
+| Column | 型別 | Nullable | Default | PK | FK | Index/Unique | 說明 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| id | bigint | 否 | auto | PK | | | |
+| user_id | bigint | 否 | — | | → users.id | `refresh_user_active_idx`（未撤銷 session 的 user_id + expires_at） | Session 所有人；使用者刪除時連帶刪除 |
+| jti | varchar(36) | 否 | — | | | Unique | JWT 唯一識別碼 |
+| token_hash | varchar(64) | 否 | — | | | Unique | Refresh Token SHA-256 雜湊；不保存明文 |
+| created_at | timestamp | 否 | now()（DB default） | | | | Session 建立時間 |
+| expires_at | timestamp | 否 | — | | | Check：晚於 created_at | 到期時間 |
+| revoked_at | timestamp | 是 | null | | | | 登出、rotation 或撤銷時間 |
+| replaced_by_id | bigint | 是 | null | | → refresh_sessions.id | | Rotation 後的新 Session；新 Session 刪除時設 null |
 
 ## suppliers（供應商，CRM）
 
@@ -70,11 +84,11 @@ updated: 2026-08-27
 | Column | 型別 | Nullable | Default | PK | FK | Index/Unique | 說明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | 否 | auto | PK | | | |
-| quote_id | bigint | 否 | — | | → quotes.id | Index | |
+| quote_id | bigint | 否 | — | | → quotes.id | Unique | 每張 Quote 最多一筆簽核路由 |
 | role_id | bigint | 否 | — | | → roles.id | Index | 依 FR-7a 路由邏輯找到的角色；案件建立當下只指派角色，不預先指定特定使用者 |
 | approver_id | bigint | 是 | null | | → users.id | Index | 實際認領/決議的使用者；認領前為 null（FR-8a），比照 `manual_review_queue.user_id` 的認領設計 |
 | approval_level | varchar(10) | 否 | — | | | | small／medium／large，對應 FR-7 三段金額門檻 |
-| status | varchar(20) | 否 | 'pending' | | | | pending／approved／rejected |
+| status | varchar(20) | 否 | 'pending' | | | | pending／approved／rejected／cancelled |
 | created_at | timestamp | 否 | now() | | | | 案件路由建立時間 |
 | updated_at | timestamp | 否 | now() | | | | 最後異動時間（認領/核准/駁回時更新） |
 
@@ -103,6 +117,7 @@ updated: 2026-08-27
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | 否 | auto | PK | | | |
 | quote_id | bigint | 是 | null | | → quotes.id | Index | supplier_fuzzy_match 案件在 Mask 階段建立，尚無 Quote，此欄位為 null；hallucination_mismatch 案件照樣填值 |
+| requester_user_id | bigint | 是 | null | | → users.id | Index | 原始詢價發起人，供模糊比對核准後續傳流程建立 Quote |
 | review_type | varchar(30) | 否 | — | | | | hallucination_mismatch／supplier_fuzzy_match |
 | ai_generated_text | text | 是 | null | | | | 幻覺案件用 |
 | expected_value | text | 是 | null | | | | 原始真實數字（JSON），幻覺案件用 |
