@@ -57,15 +57,25 @@ updated: 2026-08-28
   - 供應商模糊比對案件的駁回（rejected）路徑
 - Phase 4 已完成 Vue + Django + n8n + PostgreSQL 的小額詢價真實環境 E2E；中額／大額簽核、撤回與人工複核各分支仍待 Robin 逐項驗收。
 
-## 推版紀錄
+## Commit 紀錄
 
 | 日期 | 版本 / commit | 異動摘要 | 開發者 |
 | --- | --- | --- | --- |
-| 2026-08-26 | 0fc63ae | Phase 1：Django 專案初始化、DB Schema、seed 假資料、完整 CRUD API（已 push） | Claude |
-| 2026-08-27 | e5ece91 | Phase 2：n8n 環境架設、內部 API Key 認證、詢價試算主流程閉環（已 push） | Claude |
-| 2026-08-27 | d94e932 | fix：Gemini 模型過期改用 gemini-3.6-flash，真實端到端驗證通過（已 push） | Claude |
-| 2026-08-27 | 933c7c4 | Phase 3：供應商模糊比對案件核准後的 n8n 續傳串接、FR-2b 格式錯誤分流（已 push） | Claude |
-| 2026-08-27 | d9898e2 | docs：補上 933c7c4 推版紀錄（已 push） | Robin |
-| 2026-08-27 | d4fa4b2 | fix：修正 n8n Mask 遮罩節點未轉傳 user_id 導致續傳流程試算報價失敗（commit，尚未 push） | Robin |
-| 2026-08-28 | 1624b1a | Phase 4：企業式 JWT、權限收斂、簽核流程與 Vue 核心頁面（Robin 已 push，尚未部署） | Codex |
+| 2026-08-26 | 0fc63ae | Phase 1：Django 專案初始化、DB Schema、seed 假資料、完整 CRUD API | Claude |
+| 2026-08-27 | e5ece91 | Phase 2：n8n 環境架設、內部 API Key 認證、詢價試算主流程閉環 | Claude |
+| 2026-08-27 | d94e932 | fix：Gemini 模型過期改用 gemini-3.6-flash，真實端到端驗證通過 | Claude |
+| 2026-08-27 | 933c7c4 | Phase 3：供應商模糊比對案件核准後的 n8n 續傳串接、FR-2b 格式錯誤分流 | Claude |
+| 2026-08-27 | d9898e2 | docs：補上 933c7c4 推版紀錄 | Robin |
+| 2026-08-27 | d4fa4b2 | fix：修正 n8n Mask 遮罩節點未轉傳 user_id 導致續傳流程試算報價失敗 | Robin |
+| 2026-08-27 | 0a2edef | docs：補上 d4fa4b2 紀錄並修正 push 狀態 | Robin |
+| 2026-08-28 | 1624b1a | Phase 4：企業式 JWT、權限收斂、簽核流程與 Vue 核心頁面 | Codex |
+| 2026-08-28 | da90800 | docs：補記 Phase 4 commit 版號 | Robin |
+| 2026-08-28 | cc39aba | fix：完善詢價防呆與企業採購規格 | Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
+
+## Push／部署狀態
+
+| 日期 | 版本 | Push 狀態 | 部署狀態 |
+| --- | --- | --- | --- |
+| 2026-08-28 | da90800 | Robin 已推版（`origin/main`） | 尚未部署 |
+| 2026-08-28 | cc39aba | 尚未 push | 尚未部署 |
