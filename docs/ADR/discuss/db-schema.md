@@ -4,7 +4,7 @@
 
 ## 2026-08-24 [標籤：使用者] 資料表初版設計、欄位命名與角色正規化
 
-**狀態**：accepted
+**狀態**：superseded（由 2026-08-28 Phase 4.1 可擴展採購核心 Schema 取代；初版命名與遷移歷史保留）
 
 **背景**：`docs/reference/db_schema.md` 尚未建立，需要把先前各功能討論（遮罩、複核佇列、簽核金額門檻、認證機制）隱含需要的欄位落地成正式表格設計，並依使用者指示調整欄位命名與角色模型。
 
@@ -34,3 +34,34 @@
 - Django models／migrations 需依此設計建立（Phase 1），`roles` 表需要至少的種子資料（如 `employee`、`approver_50k`、`approver_100k`、`admin`）。
 - SPEC.md 的 FR-7a、權限管理模組 FR-4 需同步更新為「角色正規化＋roles 表」的描述，`main-flow.md` 對應決策標記 superseded。
 - JWT payload（見 `docs/ADR/discuss/permissions.md`）原本規劃放「角色」，現在對應到 `roles.role`（角色代碼字串），內容決策不變，僅底層資料來源改變。
+
+## 2026-08-28 [標籤：使用者／AI 提案] Phase 4.1 可擴展採購核心 Schema
+
+**狀態**：accepted
+
+**背景**：初版 `quotes` 將一間供應商、一個品項、報價、申請與流程狀態放在同一列，`products.price` 亦無法
+表達不同供應商價格；單一 `users.role_id`、可直接覆寫的庫存餘額及核准即入庫也無法承接企業式多品項、
+多供應商比價、品質驗收與職責分離。
+
+**討論內容**：為避免後續每增加拆單、報價版本、驗收或供應商 Portal 就推翻核心 Schema，採用穩定的單據
+邊界、逐項明細、不可變快照、庫存流水與多角色 RBAC；可變品項規格用受分類定義驗證的 JSONB，避免每新增
+一種規格都做 Migration。
+
+**決策**：
+1. 採購核心拆為 Purchase Request／items／requirements、RFQ／invited suppliers、Supplier Quote／items／
+   requirement results、Award／lines、Approval、Purchase Order／items、Goods Receipt／items、Quality Inspection。
+2. 主檔包含 product categories／products、suppliers、supplier products、supplier price versions；正式單據保存
+   規格、價格、幣別、稅費、交期、保固與評選規則快照。
+3. 品項規格使用由分類規格定義驗證的 JSONB；重要關聯、狀態、數量、金額與商業約束仍使用明確欄位、FK、
+   CHECK、UNIQUE 與索引，不把核心資料全部塞入 JSON。
+4. 得標使用逐項 `award_lines`，支援整單、逐品項與同品項拆量；採購單依供應商產生。
+5. 庫存使用 append-only `inventory_movements` 與 `inventory_balances`；收貨驗收合格後才入庫。
+6. 權限使用 `permissions`、`user_roles`、`role_permissions`，簽核額度使用獨立 `approval_policies`。
+7. 舊資料採新表並行與 `legacy_quote_id` 可逆遷移；切換完成前不刪除舊表或欄位。
+
+**理由**：以穩定業務實體和明細關係取代單表狀態堆疊，可讓後續功能以新增子表、欄位或規則擴充；版本、
+快照與流水則保證歷史可追溯及資料一致性。
+
+**後果**：正式 Migration 前必須另外提交 ERD、完整 SQL、資料轉換、索引與約束、鎖表風險、驗證查詢及
+回滾方案取得使用者核准；`docs/reference/db_schema.md` 在 Migration 實作任務中同步，不得提前把未落地 Schema
+寫成現況。

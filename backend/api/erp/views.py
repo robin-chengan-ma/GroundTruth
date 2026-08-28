@@ -1,6 +1,7 @@
 from rest_framework import filters, viewsets
 
 from api.core.permissions import AuthenticatedReadAdminWrite
+from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.erp import (
     InventoryRepository,
@@ -16,7 +17,7 @@ from schemas.erp import (
 
 class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
-    authentication_classes = [BusinessJwtAuthentication]
+    authentication_classes = [BusinessJwtAuthentication, InternalApiKeyAuthentication]
     permission_classes = [AuthenticatedReadAdminWrite]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]  # 供 Phase 2 n8n 依名稱查詢產品用（?search=A產品）

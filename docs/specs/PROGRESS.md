@@ -41,7 +41,12 @@ updated: 2026-08-28
 | 2026-08-28 | FR-7／FR-7a／FR-8／FR-8a | 金額路由、角色認領、核准／駁回、admin 禁止跨角色代簽 | Codex | 完成 | 小額 ≤10,000；中額 >10,000 且 ≤100,000；大額 >100,000 路由 admin；狀態與 Audit Log 同步 |
 | 2026-08-28 | Phase 4 權限 | 工作流程 API 改為唯讀清單＋明確 action，套用本人／路由角色／admin 可視範圍 | Codex | 完成 | employee 僅見本人 Quote；申請人可撤回 pending_approval，正式案件不可通用修改／刪除 |
 | 2026-08-28 | Phase 4 前端 | Vue 登入、詢價、採購清單、簽核佇列、人工複核頁與共用狀態呈現 | Codex | 完成 | 響應式桌面／390px 畫面與 browser console 已檢查；當次未啟動 Django，因此屬 UI 驗證，不宣稱真實環境 E2E |
-| 2026-08-28 | Phase 4 測試 | Backend pytest/coverage、Ruff、Migration check；Frontend lint/test/type-check/build | Codex | 完成 | Backend 153 tests、整體 95%；JWT／Refresh／簽核路由 100%。Frontend 4 tests；lint、type-check、build 全通過 |
+| 2026-08-28 | Phase 4 測試 | Backend pytest/coverage、Ruff、Migration check；Frontend lint/test/type-check/build | Codex | 完成 | Backend 166 tests、整體 95%；JWT／Refresh／簽核路由與 inquiry service 100%。Frontend 4 tests；lint、type-check、build 全通過 |
+| 2026-08-28 | Phase 4 實測修復 | 修正權限收斂後 n8n 查詢 suppliers/products 回 401，以及空／非 JSON 上游回應造成 500 | Codex | 完成 | 內部 API Key 僅開放唯讀；workflow 主流程／續傳共 4 節點補 header；Robin 由 Vue 建立 Quote #7（9,000 TWD）成功，主流程與簽核路由通過 |
+| 2026-08-28 | Phase 4 人工驗收 | Quote #7 小額簽核完整流程 | Robin | 完成 | Alice 採購清單可見、Carol 角色可見、認領、核准均成功；Alice 最終看到 approved，撤回操作不再提供 |
+| 2026-08-28 | Phase 4 資料修復 | 回填既有 pending_approval 但缺少 Approval 的簽核路由 | Codex | 完成 | Migration `procurement/0003` 已套用：#4→David、#5→Carol；#6/#7 未重複或變更。Backend 156 tests、Ruff、Migration check 通過，待 Robin 頁面複驗 |
+| 2026-08-28 | FR-2b 實測修復 | 阻止 LLM 將「一些／幾個」等模糊數量自行猜成 1 | Codex | 完成 | Django 與 n8n 雙層驗證；模糊量詞拒絕，並補支援「五個／十五件／兩百個」等中文明確整數，等待 Robin 由 Vue 複驗 |
+| 2026-08-28 | Phase 4.1 規格 | 企業採購核心升級：多品項、多供應商 RFQ、規格品質評選、逐項得標、RBAC、採購單、收貨驗收與庫存流水 | Codex／Robin | 已定案，待實作 | 核心架構已同步 SPEC／ADR；任何 Migration 前須先提交 ERD、SQL、資料轉換、風險與回滾方案並取得 Robin 核准 |
 
 ## 已知待補（非本次 Phase 範圍，記錄避免遺漏）
 
@@ -50,7 +55,7 @@ updated: 2026-08-28
   - 幻覺驗證失敗分支（`hallucination_mismatch`）——真實 Gemini 至今每次摘要都準確，未曾實際觸發過
   - 幻覺驗證失敗案件的 claim/decide 核准（套用系統樣板）／駁回（Quote 轉 `cancelled`）
   - 供應商模糊比對案件的駁回（rejected）路徑
-- Phase 4 尚未與同時啟動的 Django + n8n + PostgreSQL 做瀏覽器真實環境 E2E；目前以後端 API integration tests、前端元件測試及 Vite 瀏覽器 UI 檢查分別驗證。
+- Phase 4 已完成 Vue + Django + n8n + PostgreSQL 的小額詢價真實環境 E2E；中額／大額簽核、撤回與人工複核各分支仍待 Robin 逐項驗收。
 
 ## 推版紀錄
 
@@ -62,5 +67,5 @@ updated: 2026-08-28
 | 2026-08-27 | 933c7c4 | Phase 3：供應商模糊比對案件核准後的 n8n 續傳串接、FR-2b 格式錯誤分流（已 push） | Claude |
 | 2026-08-27 | d9898e2 | docs：補上 933c7c4 推版紀錄（已 push） | Robin |
 | 2026-08-27 | d4fa4b2 | fix：修正 n8n Mask 遮罩節點未轉傳 user_id 導致續傳流程試算報價失敗（commit，尚未 push） | Robin |
-| 2026-08-28 | 1624b1a | Phase 4：企業式 JWT、權限收斂、簽核流程與 Vue 核心頁面（commit，尚未 push／部署） | Codex |
+| 2026-08-28 | 1624b1a | Phase 4：企業式 JWT、權限收斂、簽核流程與 Vue 核心頁面（Robin 已 push，尚未部署） | Codex |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |

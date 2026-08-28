@@ -18,7 +18,7 @@ from services.approval_service import (
     withdraw_quote,
 )
 from services.hallucination_check_service import HallucinationCheckError, check_summary
-from services.inquiry_service import InquiryTriggerError, trigger_inquiry
+from services.inquiry_service import InquiryTriggerError, InquiryValidationError, trigger_inquiry
 from services.quote_calculation_service import QuoteCalculationError, create_quote
 
 
@@ -80,11 +80,7 @@ class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class InquiryTriggerView(APIView):
-    """FR-1：接收自然語言詢價文字，觸發 n8n Webhook。
-
-    Phase 2 範圍：對外先開放（Vue 前端與 JWT 認證留待 Phase 4），只負責把請求轉給 n8n
-    並原樣回傳 n8n 的最終結果。
-    """
+    """FR-1：以 JWT 使用者身分接收自然語言詢價文字，觸發 n8n Webhook。"""
 
     authentication_classes = [BusinessJwtAuthentication]
     permission_classes = [permissions.IsAuthenticated]
@@ -93,6 +89,8 @@ class InquiryTriggerView(APIView):
         raw_text = request.data.get("raw_text", "")
         try:
             result = trigger_inquiry(raw_text, user_id=request.user.id)
+        except InquiryValidationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except InquiryTriggerError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response(result, status=status.HTTP_200_OK)
@@ -104,10 +102,7 @@ class QuoteCalculationView(APIView):
 
     只給 n8n 呼叫，用內部 API Key 驗證（FR-1a），不開放給一般使用者。
 
-    user_id：詢價發起人。Vue＋JWT 使用者驗證留待 Phase 4，這裡先比照
-    manual-review-queue 的 claim/decide，要求呼叫端明確帶 user_id（見
-    docs/ADR/discuss/main-flow.md 對應決策）；Phase 4 接上 JWT 後，n8n 端改成
-    從 inquiries/trigger/ 收到的 user_id（由 Vue 帶 JWT 解出）原樣往下傳即可。
+    user_id：由 inquiries/trigger/ 驗證 JWT 後傳給 n8n，再由 n8n 原樣帶回建立 Quote。
     """
 
     authentication_classes = [InternalApiKeyAuthentication]

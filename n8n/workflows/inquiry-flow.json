@@ -164,7 +164,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 從 Gemini 回應中取出文字，解析成結構化物件。\n// LLM 有時會用 ```json ... ``` 包住，這裡先去掉再 parse。\n// FR-2b 第三種情境：供應商比對成功但其他欄位（如金額/數量）格式無法解析——\n// 不 throw、不進複核佇列，改用 parse_error 旗標讓下一個 IF 節點分流成即時回覆。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const cleaned = text.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { parse_error: true } }];\n}\n\nconst quantity = Number(parsed.quantity);\nif (!parsed.item || !parsed.supplier || !Number.isFinite(quantity) || quantity <= 0) {\n  return [{ json: { parse_error: true } }];\n}\n\nreturn [{\n  json: {\n    parse_error: false,\n    item: parsed.item,\n    quantity: quantity,\n    supplier_token: parsed.supplier,\n    currency: parsed.currency || 'TWD',\n  }\n}];"
+        "jsCode": "// 從 Gemini 回應中取出文字，解析成結構化物件。\n// FR-2b：數量必須是原文明確提供的正整數，不接受 LLM 自行猜測。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const cleaned = text.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { parse_error: true } }];\n}\n\nconst parseChineseInteger = value => {\n  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };\n  const units = { 十: 10, 百: 100, 千: 1000, 萬: 10000 };\n  let total = 0, section = 0, number = 0;\n  for (const character of value) {\n    if (character in digits) { number = digits[character]; continue; }\n    const unit = units[character];\n    if (unit === 10000) { total += (section + number) * unit; section = 0; number = 0; }\n    else { section += (number || 1) * unit; number = 0; }\n  }\n  return total + section + number;\n};\n\nconst quantity = Number(parsed.quantity);\nconst rawText = String($('Webhook 接收詢價').first().json.body.raw_text || '').replace(/[０-９]/g, digit => String('０１２３４５６７８９'.indexOf(digit)));\nconst explicitQuantities = [\n  ...[...rawText.matchAll(/([1-9]\\d*)\\s*(?:個|件|台|組|箱|張|支|份|套|包|瓶|顆|本|盒)/g)].map(match => Number(match[1])),\n  ...[...rawText.matchAll(/數量\\s*[:：]?\\s*([1-9]\\d*)/g)].map(match => Number(match[1])),\n  ...[...rawText.matchAll(/([零〇一二兩三四五六七八九十百千萬]+)\\s*(?:個|件|台|組|箱|張|支|份|套|包|瓶|顆|本|盒)/g)].map(match => parseChineseInteger(match[1])),\n  ...[...rawText.matchAll(/數量\\s*[:：]?\\s*([零〇一二兩三四五六七八九十百千萬]+)/g)].map(match => parseChineseInteger(match[1])),\n];\nif (!parsed.item || !parsed.supplier || !Number.isInteger(quantity) || !explicitQuantities.includes(quantity)) {\n  return [{ json: { parse_error: true } }];\n}\n\nreturn [{\n  json: {\n    parse_error: false,\n    item: parsed.item,\n    quantity,\n    supplier_token: parsed.supplier,\n    currency: parsed.currency || 'TWD',\n  }\n}];\n"
       },
       "id": "code-parse-llm-output",
       "name": "解析 LLM 輸出",
@@ -255,6 +255,15 @@
       "parameters": {
         "method": "GET",
         "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/suppliers/?search={{encodeURIComponent($json.text)}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "http-lookup-supplier",
@@ -270,6 +279,15 @@
       "parameters": {
         "method": "GET",
         "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/products/?search={{encodeURIComponent($('解析 LLM 輸出').item.json.item)}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "http-lookup-product",
@@ -509,7 +527,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// FR-2b 第三種情境：格式無法解析時不 throw，交給下一個 IF 節點分流即時回覆。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const cleaned = text.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { parse_error: true } }];\n}\n\nconst quantity = Number(parsed.quantity);\nif (!parsed.item || !Number.isFinite(quantity) || quantity <= 0) {\n  return [{ json: { parse_error: true } }];\n}\n\nreturn [{\n  json: {\n    parse_error: false,\n    item: parsed.item,\n    quantity: quantity,\n    currency: parsed.currency || 'TWD',\n  }\n}];"
+        "jsCode": "// FR-2b：續傳時仍要求數量由原文明確提供，不接受 LLM 自行猜測。\nconst text = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const cleaned = text.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  return [{ json: { parse_error: true } }];\n}\n\nconst parseChineseInteger = value => {\n  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };\n  const units = { 十: 10, 百: 100, 千: 1000, 萬: 10000 };\n  let total = 0, section = 0, number = 0;\n  for (const character of value) {\n    if (character in digits) { number = digits[character]; continue; }\n    const unit = units[character];\n    if (unit === 10000) { total += (section + number) * unit; section = 0; number = 0; }\n    else { section += (number || 1) * unit; number = 0; }\n  }\n  return total + section + number;\n};\n\nconst quantity = Number(parsed.quantity);\nconst rawText = String($('Webhook 續傳詢價').first().json.body.raw_input_text || '').replace(/[０-９]/g, digit => String('０１２３４５６７８９'.indexOf(digit)));\nconst explicitQuantities = [\n  ...[...rawText.matchAll(/([1-9]\\d*)\\s*(?:個|件|台|組|箱|張|支|份|套|包|瓶|顆|本|盒)/g)].map(match => Number(match[1])),\n  ...[...rawText.matchAll(/數量\\s*[:：]?\\s*([1-9]\\d*)/g)].map(match => Number(match[1])),\n  ...[...rawText.matchAll(/([零〇一二兩三四五六七八九十百千萬]+)\\s*(?:個|件|台|組|箱|張|支|份|套|包|瓶|顆|本|盒)/g)].map(match => parseChineseInteger(match[1])),\n  ...[...rawText.matchAll(/數量\\s*[:：]?\\s*([零〇一二兩三四五六七八九十百千萬]+)/g)].map(match => parseChineseInteger(match[1])),\n];\nif (!parsed.item || !Number.isInteger(quantity) || !explicitQuantities.includes(quantity)) {\n  return [{ json: { parse_error: true } }];\n}\n\nreturn [{\n  json: {\n    parse_error: false,\n    item: parsed.item,\n    quantity,\n    currency: parsed.currency || 'TWD',\n  }\n}];\n"
       },
       "id": "code-parse-llm-output-resume",
       "name": "解析 LLM 輸出（續傳）",
@@ -573,6 +591,15 @@
       "parameters": {
         "method": "GET",
         "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/products/?search={{encodeURIComponent($('解析 LLM 輸出（續傳）').first().json.item)}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "http-lookup-product-resume",
@@ -588,6 +615,15 @@
       "parameters": {
         "method": "GET",
         "url": "={{$env.DJANGO_API_BASE_URL}}/api/v1/suppliers/{{$('Webhook 續傳詢價').first().json.body.supplier_id}}/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Api-Key",
+              "value": "={{$env.INTERNAL_API_KEY}}"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "http-lookup-supplier-resume",

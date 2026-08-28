@@ -14,7 +14,7 @@ updated: 2026-08-28
 | 呼叫方 | 端點範圍 | 認證方式 |
 | --- | --- | --- |
 | Vue 前端 | `/auth/*`、一般資源、`inquiries/trigger/`、簽核／複核 action | Access Token 放記憶體並以 `Authorization: Bearer <token>` 傳送；Refresh Token 僅存 HttpOnly、SameSite=Lax Cookie，refresh/logout 另驗證 `X-CSRFToken` |
-| n8n | `quotes/calculate/`、`masking/mask/`、`masking/mask-amounts-only/`、`masking/unmask/`、`quotes/verify-hallucination/` | 固定 API Key，自訂 header `X-Internal-Api-Key`，需與 `INTERNAL_API_KEY` 環境變數一致（FR-1a） |
+| n8n | suppliers/products 唯讀查詢、`quotes/calculate/`、`masking/mask/`、`masking/mask-amounts-only/`、`masking/unmask/`、`quotes/verify-hallucination/` | 固定 API Key，自訂 header `X-Internal-Api-Key`，需與 `INTERNAL_API_KEY` 環境變數一致（FR-1a） |
 | Django（主動呼叫方） | n8n 的 `N8N_RESUME_WEBHOOK_URL`（`POST .../webhook/inquiry/resume`） | 固定 API Key，同上 header；由 Django 主動發起，不是被呼叫端，見 `docs/ADR/discuss/main-flow.md` |
 
 ## Vue 登入與 Session
@@ -34,7 +34,8 @@ rotation／撤銷狀態，不保存 Token 明文。
 | 資源 | 可視範圍 | 可寫入範圍 |
 | --- | --- | --- |
 | roles、users | admin | admin CRUD；密碼寫入時由後端雜湊 |
-| suppliers、products、inventory、purchase-suggestions | 已登入使用者 | 僅 admin 可用通用 CRUD 寫入 |
+| suppliers、products | 已登入使用者；n8n 可用內部 API Key 唯讀查詢 | 僅 admin 可用通用 CRUD 寫入；內部服務不可寫入 |
+| inventory、purchase-suggestions | 已登入使用者 | 僅 admin 可用通用 CRUD 寫入 |
 | quotes | employee 僅本人；簽核人可見路由至其角色的案件；admin 可見全部 | 通用 API 唯讀；本人僅能呼叫 `withdraw` 撤回待簽核案件 |
 | approvals | 簽核人可見路由至其角色及本人認領案件；admin 可見全部 | 通用 API 唯讀；只能用 `claim`／`decide` action，且不得跨角色代簽 |
 | manual-review-queue、audit-logs | admin | 複核僅 `claim`／`decide`；audit logs 全部唯讀 |
@@ -50,9 +51,13 @@ FR-1：接收自然語言詢價文字，同步呼叫 n8n Webhook（`N8N_INQUIRY_
 { "raw_text": "幫我訂20個A產品，跟優品科技拿貨" }
 ```
 
+`raw_text` 必須包含可由固定規則驗證的明確正整數數量，例如「20 個／20 件／數量：20／五個／
+十五件」；支援阿拉伯、全形與中文數字。模糊量詞如「一些／幾個」不得由 LLM 自行猜值，會在
+呼叫 n8n 前回 400。
+
 **Response（200）**：原樣透傳 n8n workflow 的最終輸出。
 
-**Response（400）**：`raw_text` 為空。
+**Response（400）**：`raw_text` 為空，或缺少明確正整數數量。
 
 **Response（401）**：Bearer Access Token 缺漏或失效。
 

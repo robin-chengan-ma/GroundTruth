@@ -8,7 +8,7 @@ updated: 2026-08-28
 > 技術參考文件，跟著程式碼異動更新，不是決策紀錄（決策放 `docs/ADR/discuss/`）也不是產品規格（放
 > `docs/specs/SPEC.md`）。內容力求簡述；設計理由與討論過程見 `docs/ADR/discuss/db-schema.md`。
 >
-> **最新 Migration 編號**：core `0002_refresh_session`、procurement `0002_approval_cancelled_unique`、
+> **最新 Migration 編號**：core `0002_refresh_session`、procurement `0003_backfill_pending_approvals`、
 > audit `0003_manualreviewqueue_requester`；crm／erp 維持 `0001_initial`。
 
 ## roles（角色）
@@ -80,6 +80,9 @@ updated: 2026-08-28
 | created_at | timestamp | 否 | now() | | | | |
 
 ## approvals（簽核紀錄）
+
+Migration `procurement/0003_backfill_pending_approvals` 會為既有 `pending_approval` 且缺少 Approval 的
+Quote 依現行金額門檻補建一筆路由；不修改已有 Approval 的案件。
 
 | Column | 型別 | Nullable | Default | PK | FK | Index/Unique | 說明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |

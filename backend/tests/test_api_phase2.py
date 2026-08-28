@@ -44,6 +44,18 @@ def test_inquiry_trigger_endpoint_upstream_failure(mock_trigger, api_client, use
 
 
 @pytest.mark.django_db
+def test_inquiry_trigger_rejects_vague_quantity_before_n8n(api_client, user):
+    resp = api_client.post(
+        "/api/v1/inquiries/trigger/",
+        {"raw_text": "跟優品科技買一些 A產品-辦公椅"},
+        HTTP_AUTHORIZATION=bearer(user),
+    )
+
+    assert resp.status_code == 400
+    assert resp.data == {"detail": "詢價內容格式無法解析，請提供明確的正整數數量"}
+
+
+@pytest.mark.django_db
 def test_quote_calculate_requires_internal_api_key(api_client, product, supplier, user, settings):
     settings.INTERNAL_API_KEY = "test-internal-key"
     resp = api_client.post(
@@ -115,11 +127,49 @@ def test_supplier_search_by_name(api_client, supplier, user):
 
 
 @pytest.mark.django_db
+def test_supplier_search_allows_internal_api_key_read_only(api_client, supplier, settings):
+    settings.INTERNAL_API_KEY = "test-internal-key"
+
+    search = api_client.get(
+        f"/api/v1/suppliers/?search={supplier.name}",
+        HTTP_X_INTERNAL_API_KEY="test-internal-key",
+    )
+    create = api_client.post(
+        "/api/v1/suppliers/",
+        {"name": "n8n 不得建立", "tier": "normal"},
+        HTTP_X_INTERNAL_API_KEY="test-internal-key",
+    )
+
+    assert search.status_code == 200
+    assert search.data["results"][0]["id"] == supplier.id
+    assert create.status_code == 403
+
+
+@pytest.mark.django_db
 def test_product_search_by_name(api_client, product, user):
     resp = api_client.get(f"/api/v1/products/?search={product.name}", HTTP_AUTHORIZATION=bearer(user))
     assert resp.status_code == 200
     assert resp.data["count"] == 1
     assert resp.data["results"][0]["id"] == product.id
+
+
+@pytest.mark.django_db
+def test_product_search_allows_internal_api_key_read_only(api_client, product, settings):
+    settings.INTERNAL_API_KEY = "test-internal-key"
+
+    search = api_client.get(
+        f"/api/v1/products/?search={product.name}",
+        HTTP_X_INTERNAL_API_KEY="test-internal-key",
+    )
+    update = api_client.patch(
+        f"/api/v1/products/{product.id}/",
+        {"price": "1.00"},
+        HTTP_X_INTERNAL_API_KEY="test-internal-key",
+    )
+
+    assert search.status_code == 200
+    assert search.data["results"][0]["id"] == product.id
+    assert update.status_code == 403
 
 
 @pytest.mark.django_db
