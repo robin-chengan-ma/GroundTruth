@@ -94,6 +94,7 @@ updated: 2026-08-31
 | 2026-08-28 | 1624b1a | Phase 4：企業式 JWT、權限收斂、簽核流程與 Vue 核心頁面 | Codex |
 | 2026-08-28 | da90800 | docs：補記 Phase 4 commit 版號 | Robin |
 | 2026-08-28 | cc39aba | fix：完善詢價防呆與企業採購規格 | Robin |
+| 2026-08-31 | fc0d9e9 | Phase 4.1：企業採購閉環、自然語言需求確認與本人採購需求清單 | Codex／Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
