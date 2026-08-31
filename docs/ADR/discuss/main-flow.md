@@ -301,3 +301,4 @@
 
 **後果**：預期需要重構採購領域資料模型、API、Service、n8n 結構化解析、Vue 導覽與頁面、角色權限、
 稽核事件及測試；任何 migration 前必須另行提出 SQL、資料轉換、索引／鎖表風險與回滾方案並取得使用者核准。
+Phase 4.1 的詳細 ERD、狀態機、RBAC、遷移與測試設計見 `docs/ADR/discuss/phase4-1-architecture.md`。

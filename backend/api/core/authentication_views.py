@@ -13,10 +13,17 @@ from services.authentication_service import (
     revoke_refresh_token,
     rotate_refresh_token,
 )
+from services.rbac_service import get_permission_codes
 
 
 def _user_payload(user):
-    return {"id": user.id, "name": user.name, "email": user.email, "role": user.role.role}
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": user.role.role,
+        "permissions": sorted(get_permission_codes(user)),
+    }
 
 
 def _set_refresh_cookie(response, token):

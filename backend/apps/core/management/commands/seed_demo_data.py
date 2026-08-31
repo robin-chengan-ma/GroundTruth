@@ -5,11 +5,12 @@ from decimal import Decimal
 from django.contrib.auth.hashers import make_password
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 
-from apps.core.models import Role, User
+from apps.core.models import Permission, Role, RolePermission, User, UserRole
 from apps.crm.models import Supplier
 from apps.erp.models import Inventory, Product
-from apps.procurement.models import Quote
+from apps.procurement.models import ApprovalPolicy, ApprovalPolicyStep, Quote
 
 
 class Command(BaseCommand):
@@ -19,6 +20,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         roles = self._seed_roles()
         users = self._seed_users(roles)
+        self._seed_rbac(roles, users)
+        self._seed_approval_policies(roles)
         suppliers = self._seed_suppliers()
         products = self._seed_products()
         self._seed_inventory(products)
@@ -30,6 +33,10 @@ class Command(BaseCommand):
             ("employee", None),
             ("approver_10k", Decimal("10000.00")),
             ("approver_100k", Decimal("100000.00")),
+            ("procurement_director", None),
+            ("procurement_exception_reviewer", None),
+            ("receiver", None),
+            ("inspector", None),
             ("admin", None),
         ]
         roles = {}
@@ -47,6 +54,8 @@ class Command(BaseCommand):
             ("Carol Wu", "carol@groundtruth.demo", "approver_10k"),
             ("David Huang", "david@groundtruth.demo", "approver_100k"),
             ("Eva Kao", "eva@groundtruth.demo", "admin"),
+            ("Frank Tsai", "frank@groundtruth.demo", "receiver"),
+            ("Grace Liu", "grace@groundtruth.demo", "inspector"),
         ]
         users = {}
         for name, email, role_code in specs:
@@ -60,6 +69,108 @@ class Command(BaseCommand):
             )
             users[email] = user
         return users
+
+    def _seed_rbac(self, roles, users):
+        permission_specs = {
+            "employee": [
+                ("purchase_request.create", "建立採購需求"),
+                ("purchase_request.read_own", "讀取自己的採購需求"),
+                ("purchase_request.edit_draft", "編輯自己的需求草稿"),
+                ("purchase_request.submit", "提交自己的採購需求"),
+                ("purchase_request.withdraw", "撤回自己的採購需求"),
+                ("master_data.read", "讀取主檔"),
+                ("inventory.read", "讀取庫存"),
+            ],
+            "approver_10k": [
+                ("approval.claim", "認領簽核案件"),
+                ("approval.decide", "決議簽核案件"),
+                ("approval.read_all", "讀取可簽核案件"),
+                ("master_data.read", "讀取主檔"),
+                ("requirement.waive", "核准必要條件例外"),
+            ],
+            "approver_100k": [
+                ("approval.claim", "認領簽核案件"),
+                ("approval.decide", "決議簽核案件"),
+                ("approval.read_all", "讀取可簽核案件"),
+                ("master_data.read", "讀取主檔"),
+                ("requirement.waive", "核准必要條件例外"),
+            ],
+            "procurement_director": [
+                ("approval.claim", "認領簽核案件"),
+                ("approval.decide", "決議簽核案件"),
+                ("approval.read_all", "讀取可簽核案件"),
+                ("master_data.read", "讀取主檔"),
+                ("rfq.manage", "管理 RFQ"),
+                ("award.recommend", "建立與提交得標方案"),
+                ("purchase_order.manage", "管理與發出採購單"),
+                ("supplier_quote.manage", "管理供應商報價"),
+                ("requirement.waive", "核准必要條件例外"),
+            ],
+            "procurement_exception_reviewer": [
+                ("approval.claim", "認領簽核案件"),
+                ("approval.decide", "決議簽核案件"),
+                ("approval.read_all", "讀取可簽核案件"),
+                ("requirement.waive", "核准必要條件例外"),
+            ],
+            "receiver": [
+                ("receipt.record", "建立與送出收貨單"),
+                ("master_data.read", "讀取主檔"),
+                ("inventory.read", "讀取庫存"),
+            ],
+            "inspector": [
+                ("inspection.decide", "執行品質驗收"),
+                ("master_data.read", "讀取主檔"),
+                ("inventory.read", "讀取庫存"),
+            ],
+            "admin": [
+                ("identity.manage", "管理帳號與角色"),
+                ("master_data.manage", "管理供應商與品項主檔"),
+                ("manual_review.claim", "認領人工複核案件"),
+                ("manual_review.decide", "決議人工複核案件"),
+                ("audit.read", "讀取稽核紀錄"),
+            ],
+        }
+        for user in users.values():
+            UserRole.objects.get_or_create(user=user, role=user.role)
+        UserRole.objects.get_or_create(
+            user=users["david@groundtruth.demo"],
+            role=roles["procurement_director"],
+        )
+        for email in ("carol@groundtruth.demo", "david@groundtruth.demo"):
+            UserRole.objects.get_or_create(
+                user=users[email],
+                role=roles["procurement_exception_reviewer"],
+            )
+        for role_code, specs in permission_specs.items():
+            for code, name in specs:
+                permission, _ = Permission.objects.get_or_create(code=code, defaults={"name": name})
+                RolePermission.objects.get_or_create(role=roles[role_code], permission=permission)
+
+    def _seed_approval_policies(self, roles):
+        now = timezone.now()
+        specs = [
+            ("TWD 小額 Demo", Decimal("0.00"), Decimal("10000.00"), "approver_10k"),
+            ("TWD 中額 Demo", Decimal("10000.00"), Decimal("100000.00"), "approver_100k"),
+            ("TWD 大額 Demo", Decimal("100000.00"), None, "procurement_director"),
+        ]
+        for name, minimum, maximum, role_code in specs:
+            policy, _ = ApprovalPolicy.objects.get_or_create(
+                name=name,
+                currency="TWD",
+                defaults={
+                    "min_amount": minimum,
+                    "max_amount": maximum,
+                    "active_from": now,
+                },
+            )
+            if policy.waiver_role_id != roles["procurement_exception_reviewer"].id:
+                policy.waiver_role = roles["procurement_exception_reviewer"]
+                policy.save(update_fields=["waiver_role", "updated_at"])
+            ApprovalPolicyStep.objects.get_or_create(
+                policy=policy,
+                sequence=1,
+                defaults={"role": roles[role_code]},
+            )
 
     def _seed_suppliers(self):
         specs = [

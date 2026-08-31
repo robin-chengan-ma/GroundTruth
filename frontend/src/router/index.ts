@@ -6,26 +6,48 @@ import InquiryView from '../views/InquiryView.vue'
 import LoginView from '../views/LoginView.vue'
 import ManualReviewView from '../views/ManualReviewView.vue'
 import QuoteListView from '../views/QuoteListView.vue'
+import { canAccess, firstAccessiblePath } from '../navigation'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
-    { path: '/', redirect: '/inquiry' },
-    { path: '/inquiry', name: 'inquiry', component: InquiryView },
-    { path: '/quotes', name: 'quotes', component: QuoteListView },
-    { path: '/approvals', name: 'approvals', component: ApprovalView, meta: { approver: true } },
-    { path: '/reviews', name: 'reviews', component: ManualReviewView, meta: { admin: true } },
+    { path: '/', name: 'home', component: { template: '<span />' } },
+    {
+      path: '/inquiry',
+      name: 'inquiry',
+      component: InquiryView,
+      meta: { permissions: ['purchase_request.create'] },
+    },
+    {
+      path: '/quotes',
+      name: 'quotes',
+      component: QuoteListView,
+      meta: { permissions: ['purchase_request.read_own'] },
+    },
+    {
+      path: '/approvals',
+      name: 'approvals',
+      component: ApprovalView,
+      meta: { permissions: ['approval.read_all'] },
+    },
+    {
+      path: '/reviews',
+      name: 'reviews',
+      component: ManualReviewView,
+      meta: { permissions: ['manual_review.decide'] },
+    },
   ],
 })
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.bootstrap()
-  if (to.meta.public) return auth.isAuthenticated ? '/inquiry' : true
+  const fallback = firstAccessiblePath(auth.user?.permissions ?? [])
+  if (to.meta.public) return auth.isAuthenticated ? (fallback ?? false) : true
   if (!auth.isAuthenticated) return { name: 'login', query: { redirect: to.fullPath } }
-  if (to.meta.admin && !auth.isAdmin) return '/inquiry'
-  if (to.meta.approver && !auth.canApprove) return '/inquiry'
+  if (to.name === 'home') return fallback ?? false
+  if (!canAccess(auth.user?.permissions ?? [], to.meta.permissions)) return fallback ?? false
   return true
 })
 

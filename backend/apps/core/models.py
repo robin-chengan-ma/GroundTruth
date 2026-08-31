@@ -39,6 +39,101 @@ class User(models.Model):
         return True
 
 
+class Permission(models.Model):
+    """可授予角色的最小操作能力。"""
+
+    code = models.CharField(max_length=100, unique=True, db_comment="權限代碼，例如 purchase_request.create")
+    name = models.CharField(max_length=100, db_comment="權限顯示名稱")
+    description = models.TextField(blank=True, db_comment="權限用途說明")
+    created_at = models.DateTimeField(db_default=Now(), editable=False, db_comment="建立時間（由資料庫產生）")
+
+    class Meta:
+        db_table = "permissions"
+        db_table_comment = "RBAC 權限主檔"
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(code=""),
+                name="permissions_code_not_empty",
+            ),
+        ]
+
+    def __str__(self):
+        return self.code
+
+
+class UserRole(models.Model):
+    """使用者可同時持有多個角色；users.role_id 暫留供舊流程 dual-read。"""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="user_roles",
+        db_column="user_id",
+        db_comment="持有角色的 users.id",
+    )
+    role = models.ForeignKey(
+        Role,
+        on_delete=models.CASCADE,
+        related_name="user_roles",
+        db_column="role_id",
+        db_comment="授予的 roles.id",
+    )
+    valid_from = models.DateTimeField(db_default=Now(), db_comment="角色生效時間")
+    valid_until = models.DateTimeField(null=True, blank=True, db_comment="角色失效時間；NULL 表示持續有效")
+    assigned_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_user_roles",
+        db_column="assigned_by_id",
+        db_comment="授予角色的 users.id；資料遷移可為 NULL",
+    )
+    created_at = models.DateTimeField(db_default=Now(), editable=False, db_comment="建立時間（由資料庫產生）")
+
+    class Meta:
+        db_table = "user_roles"
+        db_table_comment = "使用者與角色的多對多指派及有效期間"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "role"], name="user_roles_user_role_unique"),
+            models.CheckConstraint(
+                condition=models.Q(valid_until__isnull=True)
+                | models.Q(valid_until__gt=models.F("valid_from")),
+                name="user_roles_valid_period_check",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "valid_until"], name="user_roles_active_idx"),
+        ]
+
+
+class RolePermission(models.Model):
+    """角色所包含的操作能力。"""
+
+    role = models.ForeignKey(
+        Role,
+        on_delete=models.CASCADE,
+        related_name="role_permissions",
+        db_column="role_id",
+        db_comment="對應 roles.id",
+    )
+    permission = models.ForeignKey(
+        Permission,
+        on_delete=models.CASCADE,
+        related_name="role_permissions",
+        db_column="permission_id",
+        db_comment="對應 permissions.id",
+    )
+    created_at = models.DateTimeField(db_default=Now(), editable=False, db_comment="建立時間（由資料庫產生）")
+
+    class Meta:
+        db_table = "role_permissions"
+        db_table_comment = "RBAC 角色與權限對照"
+        constraints = [
+            models.UniqueConstraint(fields=["role", "permission"], name="role_permissions_pair_unique"),
+        ]
+
+
 class RefreshSession(models.Model):
     """Refresh Token rotation／撤銷狀態；只保存 Token 雜湊，不落地明文。"""
 

@@ -3,6 +3,7 @@ import axios from 'axios'
 import { onMounted, ref } from 'vue'
 
 import { api } from '../api/client'
+import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { useAuthStore } from '../stores/auth'
 import type { Approval, Paginated } from '../types/api'
@@ -33,7 +34,9 @@ onMounted(load)
 </script>
 
 <template>
-  <header class="page-header"><div><p>待辦工作</p><h1>簽核工作區</h1></div><button class="secondary-button" @click="load">重新整理</button></header>
+  <PageHeader eyebrow="待辦工作" title="簽核工作區">
+    <template #actions><button class="secondary-button" @click="load">重新整理</button></template>
+  </PageHeader>
   <p v-if="error" class="error-message" role="alert">{{ error }}</p>
   <p v-if="loading" class="surface empty-state">載入中…</p>
   <p v-else-if="approvals.length === 0" class="surface empty-state">目前沒有符合資格的簽核案件。</p>

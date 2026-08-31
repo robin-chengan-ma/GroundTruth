@@ -16,7 +16,13 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     isAuthenticated: (state) => Boolean(state.user),
     isAdmin: (state) => state.user?.role === 'admin',
-    canApprove: (state) => Boolean(state.user && state.user.role !== 'employee'),
+    hasPermission: (state) => (permission: string) =>
+      Boolean(state.user?.permissions.includes(permission)),
+    hasAllPermissions: (state) => (permissions: string[]) =>
+      permissions.every((permission) => state.user?.permissions.includes(permission)),
+    hasAnyPermission: (state) => (permissions: string[]) =>
+      permissions.some((permission) => state.user?.permissions.includes(permission)),
+    canApprove: (state) => Boolean(state.user?.permissions.includes('approval.read_all')),
   },
   actions: {
     async login(email: string, password: string) {

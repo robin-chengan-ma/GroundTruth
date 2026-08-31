@@ -3,6 +3,7 @@ import axios from 'axios'
 import { onMounted, ref } from 'vue'
 
 import { api } from '../api/client'
+import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { useAuthStore } from '../stores/auth'
 import type { ManualReview, Paginated } from '../types/api'
@@ -39,7 +40,9 @@ onMounted(load)
 </script>
 
 <template>
-  <header class="page-header"><div><p>AI 安全</p><h1>人工複核</h1></div><button class="secondary-button" @click="load">重新整理</button></header>
+  <PageHeader eyebrow="AI 安全" title="人工複核">
+    <template #actions><button class="secondary-button" @click="load">重新整理</button></template>
+  </PageHeader>
   <p v-if="error" class="error-message" role="alert">{{ error }}</p>
   <p v-if="reviews.length === 0" class="surface empty-state">目前沒有人工複核案件。</p>
   <div v-else class="card-grid">

@@ -3,6 +3,7 @@ export interface UserProfile {
   name: string
   email: string
   role: string
+  permissions: string[]
 }
 
 export interface Paginated<T> {
@@ -60,4 +61,56 @@ export interface ManualReview {
   decision: string | null
   created_at: string
   updated_at: string
+}
+
+export interface SupplierOption { id: number; name: string }
+export interface ProductOption { id: number; name: string; price: string; currency: string }
+export interface PurchaseCandidateItem {
+  product_id: number | null
+  product_name: string
+  quantity: string | null
+  unit_of_measure: string
+  specifications: Record<string, string>
+}
+export interface PurchaseCandidate {
+  purpose: string
+  needed_by: string | null
+  currency: string
+  assistant_message: string
+  supplier_candidates: Array<{ supplier_id: number | null; supplier_name: string }>
+  items: PurchaseCandidateItem[]
+  missing_fields: string[]
+  ready_for_draft: boolean
+}
+export interface PurchaseDraft { id: number; version: number; status: string }
+export interface PurchaseRequestSummary {
+  id: number
+  request_no: string
+  purpose: string
+  requester_name: string
+  status: string
+  currency: string
+  item_summary: string
+  supplier_summary: string
+  created_at: string
+  updated_at: string
+}
+export interface EstimateItem {
+  product_id: number
+  product_name: string
+  quantity: string
+  unit_of_measure: string
+  available: boolean
+  message?: string
+  unit_price?: string
+  total_amount?: string
+  currency?: string
+  price_comparison?: { status: 'unavailable' | 'normal' | 'warning'; label: string; deviation_pct: string | null }
+}
+export interface DraftEstimate {
+  request_id: number
+  version: number
+  status: 'estimate_only'
+  message: string
+  suppliers: Array<{ supplier_id: number; supplier_name: string; items: EstimateItem[]; estimated_total: string; currency: string }>
 }

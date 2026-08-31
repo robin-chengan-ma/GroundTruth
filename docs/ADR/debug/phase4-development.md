@@ -87,6 +87,20 @@ workflow，真實呼叫小額詢價 Webhook 回 HTTP 200 與 JSON 回應；再�
 
 **未驗證範圍**：等待 Robin 從 Vue 以相同句子複驗；誤建 Quote #8 保留待 Robin 自行撤回。
 
+## 2026-08-31 新採購需求送出後狀態與清單顯示不一致
+
+**現象**：Robin 完成 n8n v2 真實環境串接並從 Vue 送出 Purchase Request 後，新增頁仍保留原輸入、候選資料與試算結果，成功訊息持續顯示；無有效價格的供應商總額顯示 `TWD 0`；「我的採購需求」仍列 legacy Quote，缺少建立時間且看不到剛送出的新 Purchase Request。
+
+**排查過程**：比對 `InquiryView` 提交成功分支、試算卡片總額判斷、`QuoteListView` 的 API 來源，以及 `PurchaseRequest` 既有欄位與本人 RBAC。確認新單據已正確建立，問題集中在前端狀態未清除、無價格時仍格式化初始總額 0，以及清單仍呼叫 legacy `/quotes/`。
+
+**根因**：提交成功原本只清除試算結果，未清除輸入、AI 候選與草稿識別；供應商彙總總額以 0 初始化，畫面沒有先判斷是否存在任何有效價格；Phase 4.1 新單據上線後，舊採購清單頁尚未從 legacy Quote 切換至 `purchase_requests`。
+
+**修復方式**：提交成功後重置本輪全部表單狀態，改以約 5 秒自動消失、可手動關閉且含「查看申請」入口的 Toast 呈現申請編號；全部品項缺價時顯示「尚無報價」；新增本人 Purchase Request 唯讀清單 API，依 `created_at` 新到舊排序，前端顯示申請編號、用途、品項／候選供應商摘要、申請人、建立時間與狀態，不再與 legacy Quote 混用。
+
+**驗證方式**：新增後端本人範圍／排序／建立時間 API 測試，以及前端送出重置、缺價與新清單呈現測試；目標 Backend 1 passed、Frontend 4 passed，完整 Backend 338 passed、Frontend 15 passed，type-check、ESLint、production build、Ruff、Django check 與 Migration check 均通過。Robin 已先完成 n8n production webhook 與 Vue 解析、人工主檔選擇、試算及提交的真實環境 E2E。
+
+**未驗證範圍**：無；Robin 已於瀏覽器確認提交後重置、Toast 自動消失與查看入口、無價格提示，以及本人需求清單建立時間與最新排序皆正常。
+
 ### 中文明確數量補充
 
 Robin 複驗時發現「五個」被第一版防呆誤判為格式錯誤。根因是固定驗證只涵蓋半形／全形阿拉伯

@@ -18,4 +18,12 @@ class InventorySerializer(serializers.ModelSerializer):
 class PurchaseSuggestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseSuggestion
-        fields = ["id", "product", "suggested_qty", "status", "created_at"]
+        fields = [
+            "id",
+            "product",
+            "suggested_qty",
+            "status",
+            "source_movement",
+            "purchase_request",
+            "created_at",
+        ]

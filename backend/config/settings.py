@@ -112,6 +112,9 @@ REST_FRAMEWORK = {
 # n8n ↔ Django 內部服務認證（FR-1a）與流程協調用設定。
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
 N8N_INQUIRY_WEBHOOK_URL = os.environ.get("N8N_INQUIRY_WEBHOOK_URL", "http://localhost:5678/webhook/inquiry")
+N8N_INQUIRY_PARSE_WEBHOOK_URL = os.environ.get(
+    "N8N_INQUIRY_PARSE_WEBHOOK_URL", "http://localhost:5678/webhook/purchase-request-candidate",
+)
 # FR-6a：供應商模糊比對案件核准後，Django 主動呼叫這支 n8n webhook，交還流程重新走
 # 遮罩→LLM 解析（見 services/inquiry_resume_service.py、n8n/workflows/inquiry-flow.json 的續傳分支）。
 N8N_RESUME_WEBHOOK_URL = os.environ.get("N8N_RESUME_WEBHOOK_URL", "http://localhost:5678/webhook/inquiry/resume")

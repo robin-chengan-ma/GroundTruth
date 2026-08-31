@@ -25,7 +25,13 @@ describe('auth store', () => {
     post.mockResolvedValue({
       data: {
         access: 'access-token',
-        user: { id: 1, name: 'Alice', email: 'alice@example.com', role: 'employee' },
+        user: {
+          id: 1,
+          name: 'Alice',
+          email: 'alice@example.com',
+          role: 'employee',
+          permissions: ['purchase_request.create'],
+        },
       },
     })
     const store = useAuthStore()
@@ -35,11 +41,21 @@ describe('auth store', () => {
     expect(setAccessToken).toHaveBeenCalledWith('access-token')
     expect(store.user?.name).toBe('Alice')
     expect(store.isAuthenticated).toBe(true)
+    expect(store.hasPermission('purchase_request.create')).toBe(true)
+    expect(store.hasPermission('approval.decide')).toBe(false)
   })
 
   it('bootstrap 以 HttpOnly refresh cookie 恢復登入', async () => {
     post.mockResolvedValue({ data: { access: 'rotated-access' } })
-    get.mockResolvedValue({ data: { id: 3, name: 'Eva', email: 'eva@example.com', role: 'admin' } })
+    get.mockResolvedValue({
+      data: {
+        id: 3,
+        name: 'Eva',
+        email: 'eva@example.com',
+        role: 'admin',
+        permissions: ['manual_review.decide'],
+      },
+    })
     const store = useAuthStore()
 
     await store.bootstrap()

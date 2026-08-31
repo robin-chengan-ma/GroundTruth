@@ -1,6 +1,6 @@
 ---
 title: 部署 Reference
-updated: 2026-08-28
+updated: 2026-08-31
 ---
 
 # 部署 Reference
@@ -17,7 +17,7 @@ updated: 2026-08-28
 | 項目 | 內容 |
 | --- | --- |
 | 入口 | `backend/manage.py runserver` |
-| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`、`N8N_RESUME_WEBHOOK_URL`；`REFRESH_COOKIE_SECURE` 控制本機 HTTP／HTTPS Cookie Secure 屬性 |
+| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`、`N8N_INQUIRY_PARSE_WEBHOOK_URL`、`N8N_RESUME_WEBHOOK_URL`；`REFRESH_COOKIE_SECURE` 控制本機 HTTP／HTTPS Cookie Secure 屬性 |
 | 外部依賴 | 本機 PostgreSQL（Phase 1 起） |
 | Health Check | 尚未建立專用端點；未帶 Token 呼叫 `GET /api/v1/auth/me/` 回 401 可確認 Django 路由存活，不代表 DB 與外部依賴完整健康 |
 | 已知限制 | 尚無專用健康檢查；Refresh Cookie 正式 HTTPS 環境必須設定 `REFRESH_COOKIE_SECURE=true` |

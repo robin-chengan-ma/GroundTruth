@@ -1,0 +1,74 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { get, post, patch } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }))
+vi.mock('../api/client', () => ({ api: { get, post, patch } }))
+import InquiryView from '../views/InquiryView.vue'
+
+const parsedCandidate = {
+  purpose: '補貨', needed_by: null, currency: 'TWD', assistant_message: '請確認',
+  supplier_candidates: [{ supplier_id: 1, supplier_name: '優品科技' }],
+  items: [{ product_id: 10, product_name: '辦公椅', quantity: '5', unit_of_measure: 'EA', specifications: {} }],
+  missing_fields: [], ready_for_draft: true,
+}
+
+describe('InquiryView', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('suppliers') ? [{ id: 1, name: '優品科技' }] : [{ id: 10, name: '辦公椅', price: '1500.00', currency: 'TWD' }] }))
+  })
+
+  it('解析後顯示可編輯候選內容，不顯示 JSON', async () => {
+    post.mockResolvedValueOnce({ data: parsedCandidate })
+    const wrapper = mount(InquiryView)
+    await flushPromises()
+    await wrapper.get('#inquiry').setValue('跟優品科技買 5 張辦公椅')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(post).toHaveBeenCalledWith('/inquiries/parse/', { raw_text: '跟優品科技買 5 張辦公椅' })
+    expect(wrapper.text()).toContain('確認與修正需求')
+    expect(wrapper.text()).toContain('優品科技')
+    expect(wrapper.find('pre').exists()).toBe(false)
+  })
+
+  it('先建立草稿試算，確認後才提交', async () => {
+    post.mockResolvedValueOnce({ data: parsedCandidate })
+      .mockResolvedValueOnce({ data: { id: 7, version: 1, status: 'draft' } })
+      .mockResolvedValueOnce({ data: { request_id: 7, version: 1, status: 'estimate_only', message: '僅供參考', suppliers: [{ supplier_id: 1, supplier_name: '優品科技', estimated_total: '7500.00', currency: 'TWD', items: [{ product_id: 10, product_name: '辦公椅', quantity: '5', unit_of_measure: 'EA', available: true, unit_price: '1500.00', total_amount: '7500.00', currency: 'TWD', price_comparison: { status: 'normal', label: '接近歷史均價', deviation_pct: '2.39' } }] }] } })
+      .mockResolvedValueOnce({ data: { request_no: 'PR-2026-0007' } })
+    const wrapper = mount(InquiryView)
+    await flushPromises()
+    await wrapper.get('#inquiry').setValue('補貨')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text().includes('儲存草稿'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('TWD 7,500')
+    expect(wrapper.text()).toContain('接近歷史均價 · 2.39%')
+    await wrapper.findAll('button').find((button) => button.text().includes('提交採購申請'))!.trigger('click')
+    await flushPromises()
+    expect(post.mock.calls.at(-1)?.[0]).toBe('/purchase-request-drafts/7/submit/')
+    expect(wrapper.text()).toContain('PR-2026-0007 已成功送出')
+    expect((wrapper.get('#inquiry').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.text()).not.toContain('確認與修正需求')
+    expect(patch).not.toHaveBeenCalled()
+  })
+
+  it('缺少有效價格時顯示尚無報價而不是零元', async () => {
+    post.mockResolvedValueOnce({ data: parsedCandidate })
+      .mockResolvedValueOnce({ data: { id: 8, version: 1, status: 'draft' } })
+      .mockResolvedValueOnce({ data: { request_id: 8, version: 1, status: 'estimate_only', message: '僅供參考', suppliers: [{ supplier_id: 1, supplier_name: '優品科技', estimated_total: '0.00', currency: 'TWD', items: [{ product_id: 10, product_name: '辦公椅', quantity: '5', unit_of_measure: 'EA', available: false, message: '目前沒有有效價格' }] }] } })
+    const wrapper = mount(InquiryView)
+    await flushPromises()
+    await wrapper.get('#inquiry').setValue('補貨')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text().includes('儲存草稿'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('尚無報價')
+    expect(wrapper.text()).not.toContain('TWD 0')
+  })
+})
