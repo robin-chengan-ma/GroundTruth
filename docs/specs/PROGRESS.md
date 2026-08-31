@@ -97,6 +97,7 @@ updated: 2026-08-31
 | 2026-08-28 | da90800 | docs：補記 Phase 4 commit 版號 | Robin |
 | 2026-08-28 | cc39aba | fix：完善詢價防呆與企業採購規格 | Robin |
 | 2026-08-31 | fc0d9e9 | Phase 4.1：企業採購閉環、自然語言需求確認與本人採購需求清單 | Codex／Robin |
+| 2026-08-31 | 80362dd | P5.0-A：修復新版需求解析敏感資料遮罩 | Codex／Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
@@ -106,3 +107,4 @@ updated: 2026-08-31
 | 2026-08-28 | da90800 | Robin 已推版（`origin/main`） | 尚未部署 |
 | 2026-08-28 | ec5d0d5 | Robin 已推版（包含 `cc39aba`） | 尚未部署 |
 | 2026-08-31 | 9689540 | Robin 已推版（`origin/main`，包含 `fc0d9e9`） | 尚未部署 |
+| 2026-08-31 | 80362dd | 尚未 push | 尚未部署 |
