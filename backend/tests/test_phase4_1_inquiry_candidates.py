@@ -40,3 +40,26 @@ def test_parse_candidate_api_requires_create_permission(api_client, user):
 
     assert response.status_code == 403
     assert response.data["code"] == "permission_denied"
+
+
+@pytest.mark.django_db
+@patch("api.procurement.views.parse_purchase_request_candidate")
+def test_parse_candidate_api_keeps_missing_quantity_editable_without_coverage_error(
+    mock_parse, api_client, user, role_employee,
+):
+    _grant_create_permission(user, role_employee)
+    api_client.force_authenticate(user=user)
+    mock_parse.return_value = {
+        "currency": "TWD",
+        "supplier_candidates": [],
+        "items": [{"product_id": 10, "quantity": None}],
+        "missing_fields": ["items.0.quantity"],
+        "ready_for_draft": False,
+    }
+
+    response = api_client.post(
+        "/api/v1/inquiries/parse/", {"raw_text": "採購一些辦公椅"}, format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["supplier_product_coverage"] == []

@@ -1,5 +1,6 @@
 """自然語言詢價與新版採購需求候選解析服務。"""
 import re
+import unicodedata
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -119,6 +120,33 @@ def _resolve_product(name):
     return matches[0] if len(matches) == 1 else None
 
 
+def _normalize_product_text(value):
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    normalized = re.sub(r"[‐‑‒–—−]", "-", normalized)
+    return re.sub(r"\s+", "", normalized)
+
+
+def _explicit_product_candidates(raw_text):
+    normalized_raw_text = _normalize_product_text(raw_text)
+    return [
+        product
+        for product in Product.objects.filter(is_active=True).only("id", "name", "unit_of_measure")
+        if _normalize_product_text(product.name) in normalized_raw_text
+    ]
+
+
+def _resolve_product_from_explicit_raw_name(name, explicit_products):
+    normalized_name = _normalize_product_text(name)
+    if len(normalized_name) < 2:
+        return None
+    matches = [
+        product
+        for product in explicit_products
+        if normalized_name in _normalize_product_text(product.name)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def parse_purchase_request_candidate(raw_text: str, *, user_id: int) -> dict:
     """FR-3／NFR-1：遮罩後解析並對應主檔，只回傳候選資料，不建立單據。"""
     if not raw_text or not raw_text.strip():
@@ -140,6 +168,7 @@ def parse_purchase_request_candidate(raw_text: str, *, user_id: int) -> dict:
 
     supplier_rows = _candidate_list(parsed, "suppliers")
     item_rows = _candidate_list(parsed, "items")
+    explicit_products = _explicit_product_candidates(raw_text)
     missing_fields = []
     suppliers = []
     for index, row in enumerate(supplier_rows):
@@ -157,7 +186,9 @@ def parse_purchase_request_candidate(raw_text: str, *, user_id: int) -> dict:
     items = []
     for index, row in enumerate(item_rows):
         product_name = str(row.get("product_name") or row.get("name") or "").strip()
-        product = _resolve_product(product_name)
+        product = _resolve_product(product_name) or _resolve_product_from_explicit_raw_name(
+            product_name, explicit_products,
+        )
         quantity = _normalize_candidate_quantity(row.get("quantity"))
         specifications = row.get("specifications") or {}
         if not isinstance(specifications, dict):

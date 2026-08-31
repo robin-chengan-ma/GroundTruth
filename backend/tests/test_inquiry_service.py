@@ -4,6 +4,7 @@ import pytest
 import requests
 
 from apps.crm.models import Supplier
+from apps.erp.models import Product
 from services.inquiry_service import (
     InquiryTriggerError,
     InquiryValidationError,
@@ -116,6 +117,52 @@ def test_parse_candidate_resolves_exact_master_data_without_writing(
     assert supplier.name not in sent_text
     assert "SUP_001" in sent_text
     assert mock_parse.call_args.kwargs == {"user_id": user.id}
+
+
+@pytest.mark.django_db
+@patch("services.inquiry_service.request_candidate_parse")
+def test_parse_candidate_recovers_unique_formal_product_explicitly_named_in_raw_text(
+    mock_parse, user, supplier,
+):
+    formal_product = Product.objects.create(
+        name="A產品-辦公椅", price="1500.00", currency="TWD",
+    )
+    mock_parse.return_value = {
+        "purpose": "辦公設備汰換",
+        "suppliers": [{"name": "SUP_001"}],
+        "items": [{"product_name": "辦公椅", "quantity": 5}],
+    }
+
+    result = parse_purchase_request_candidate(
+        f"跟{supplier.name}詢價，採購網布 A 產品-辦公椅 5 張",
+        user_id=user.id,
+    )
+
+    assert result["items"][0]["product_id"] == formal_product.id
+    assert result["items"][0]["product_name"] == formal_product.name
+    assert "items.0.product_id" not in result["missing_fields"]
+
+
+@pytest.mark.django_db
+@patch("services.inquiry_service.request_candidate_parse")
+def test_parse_candidate_does_not_guess_when_raw_text_contains_ambiguous_formal_products(
+    mock_parse, user, supplier,
+):
+    Product.objects.create(name="A產品-辦公椅", price="1500.00", currency="TWD")
+    Product.objects.create(name="B產品-辦公椅", price="1800.00", currency="TWD")
+    mock_parse.return_value = {
+        "purpose": "辦公設備汰換",
+        "suppliers": [{"name": "SUP_001"}],
+        "items": [{"product_name": "辦公椅", "quantity": 5}],
+    }
+
+    result = parse_purchase_request_candidate(
+        f"跟{supplier.name}詢價，比較 A產品-辦公椅 與 B產品-辦公椅，共 5 張",
+        user_id=user.id,
+    )
+
+    assert result["items"][0]["product_id"] is None
+    assert "items.0.product_id" in result["missing_fields"]
 
 
 @pytest.mark.django_db

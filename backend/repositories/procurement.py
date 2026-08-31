@@ -1,6 +1,8 @@
 from django.db.models import Avg, Q
 from django.utils import timezone
 
+from apps.crm.models import Supplier
+from apps.erp.models import Product
 from apps.procurement.models import (
     Approval,
     ApprovalCase,
@@ -14,6 +16,7 @@ from apps.procurement.models import (
     Rfq,
     RfqSupplier,
     SupplierPriceVersion,
+    SupplierProduct,
     SupplierQuote,
     SupplierQuoteItem,
 )
@@ -162,6 +165,14 @@ class PurchaseOrderRepository:
 
 class PurchaseRequestRepository:
     @staticmethod
+    def active_suppliers(ids):
+        return Supplier.objects.filter(id__in=ids, is_active=True)
+
+    @staticmethod
+    def active_products(ids):
+        return Product.objects.filter(id__in=ids, is_active=True)
+
+    @staticmethod
     def owned(user_id):
         return (
             PurchaseRequest.objects.filter(requester_id=user_id)
@@ -215,6 +226,14 @@ class PurchaseRequestRepository:
             )
             .filter(Q(valid_until__isnull=True) | Q(valid_until__gt=at))
             .order_by("-minimum_quantity", "-valid_from", "-id")
+            .first()
+        )
+
+    @staticmethod
+    def supplier_product(*, supplier_id, product_id):
+        return (
+            SupplierProduct.objects.select_related("supplier", "product")
+            .filter(supplier_id=supplier_id, product_id=product_id)
             .first()
         )
 

@@ -16,6 +16,7 @@ from api.procurement.views import (
     QuoteRequirementResultViewSet,
     QuoteViewSet,
     RfqViewSet,
+    SupplierProductCoverageView,
     SupplierQuoteViewSet,
 )
 
@@ -41,6 +42,11 @@ router.register(
 # detail route 攔截。
 urlpatterns = [
     path("inquiries/parse/", InquiryCandidateParseView.as_view(), name="inquiry-parse"),
+    path(
+        "supplier-product-coverage/",
+        SupplierProductCoverageView.as_view(),
+        name="supplier-product-coverage",
+    ),
     path("inquiries/trigger/", InquiryTriggerView.as_view(), name="inquiry-trigger"),
     path("quotes/calculate/", QuoteCalculationView.as_view(), name="quote-calculate"),
     path("quotes/verify-hallucination/", QuoteHallucinationVerifyView.as_view(), name="quote-verify-hallucination"),

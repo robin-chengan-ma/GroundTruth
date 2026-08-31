@@ -81,6 +81,18 @@ export interface PurchaseCandidate {
   items: PurchaseCandidateItem[]
   missing_fields: string[]
   ready_for_draft: boolean
+  supplier_product_coverage?: SupplierProductCoverageRow[]
+}
+export type SupplierProductCoverageStatus = 'priced' | 'unpriced' | 'conditional' | 'blocked' | 'inactive' | 'not_configured'
+export interface SupplierProductCoverageRow {
+  supplier_id: number
+  supplier_name: string
+  product_id: number
+  product_name: string
+  status: SupplierProductCoverageStatus
+  label: string
+  unit_price: string | null
+  currency: string
 }
 export interface PurchaseDraft { id: number; version: number; status: string }
 export interface PurchaseRequestSummary {

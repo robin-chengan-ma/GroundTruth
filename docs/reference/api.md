@@ -506,7 +506,7 @@ RFQ 發出時建立六項案件快照：實際總成本 30%、規格與品質 30
 
 ## POST /api/v1/inquiries/parse/
 
-FR-3／NFR-1：Django 先以固定程式將自然語言中的已建檔供應商名稱與具金額語境的數字 Token 化，再將遮罩文字送至 n8n v2（`N8N_INQUIRY_PARSE_WEBHOOK_URL`）。n8n 回傳後由 Django 在單次請求記憶體內遞迴還原候選字串，並將候選名稱與當下生效主檔做唯一精確對應；遮罩 mapping 不寫入 DB、log 或 API Response。只回傳可編輯候選結構，不建立 Purchase Request、legacy Quote 或其他正式單據。
+FR-3／NFR-1：Django 先以固定程式將自然語言中的已建檔供應商名稱與具金額語境的數字 Token 化，再將遮罩文字送至 n8n v2（`N8N_INQUIRY_PARSE_WEBHOOK_URL`）。n8n 回傳後由 Django 在單次請求記憶體內遞迴還原候選字串。供應商依當下生效主檔唯一精確對應；產品先精確對應，未命中時只有在原句明確包含生效正式品名且與 LLM 簡化名稱唯一相容時才安全補回。遮罩 mapping 不寫入 DB、log 或 API Response。只回傳可編輯候選結構，不建立 Purchase Request、legacy Quote 或其他正式單據。
 
 **認證／權限**：Bearer Access Token；需 `purchase_request.create`。發起人固定取自 JWT，Request 中的 `user_id` 不採信。
 
@@ -529,7 +529,7 @@ FR-3／NFR-1：Django 先以固定程式將自然語言中的已建檔供應商�
 }
 ```
 
-**Response（200）**：回傳 `purpose`、`needed_by`、`currency`、`assistant_message`、`items`、`supplier_candidates`、`missing_fields`與 `ready_for_draft`。`items[].product_id` 及 `supplier_candidates[].supplier_id` 只在名稱唯一精確對應且主檔可用時回傳，其餘為 `null` 並列入 `missing_fields`。數量必須大於 0 且最多三位小數。
+**Response（200）**：回傳 `purpose`、`needed_by`、`currency`、`assistant_message`、`items`、`supplier_candidates`、`missing_fields`、`ready_for_draft` 與 `supplier_product_coverage`。`items[].product_id` 及 `supplier_candidates[].supplier_id` 只在上述安全規則唯一對應且主檔可用時回傳，其餘為 `null` 並列入 `missing_fields`。數量必須大於 0 且最多三位小數。`supplier_product_coverage` 使用下述矩陣列格式。
 
 **驗證與錯誤**：
 
@@ -539,6 +539,46 @@ FR-3／NFR-1：Django 先以固定程式將自然語言中的已建檔供應商�
 - 無權限回 403。
 - n8n 連線、非 JSON 或候選契約錯誤回 502。
 - 錯誤訊息不得顯示內部 URL、Key、原始外部錯誤或 Stack Trace。
+
+## POST /api/v1/supplier-product-coverage/
+
+FR-3：建立草稿前，依目前選擇的候選供應商、正式品項、數量與幣別回傳唯讀供應能力矩陣。資料取自 `supplier_products` 與當下有效的 `supplier_price_versions`；不建立或修改任何單據。
+
+**認證／權限**：Bearer Access Token；需 `purchase_request.create`。
+
+**Request**
+```json
+{
+  "currency": "TWD",
+  "supplier_ids": [1, 2],
+  "items": [
+    {"product_id": 10, "quantity": "5"},
+    {"product_id": 11, "quantity": "3"}
+  ]
+}
+```
+
+**Response（200）**
+```json
+{
+  "rows": [
+    {
+      "supplier_id": 1,
+      "supplier_name": "範例供應商",
+      "product_id": 10,
+      "product_name": "A產品-辦公椅",
+      "status": "priced",
+      "label": "可供應，且有有效價格",
+      "unit_price": "1500.00",
+      "currency": "TWD"
+    }
+  ]
+}
+```
+
+`status` 合法值為 `priced`、`unpriced`、`conditional`、`blocked`、`inactive`、`not_configured`。矩陣為資訊性提示，不等於供應商正式報價，也不直接阻擋草稿建立。
+
+**錯誤狀態**：未登入回 401；無權限回 403；供應商／品項陣列格式錯誤或數量非正數回 400。
 
 ## POST /api/v1/inquiries/trigger/
 

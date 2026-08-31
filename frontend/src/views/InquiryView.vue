@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
 import PageHeader from '../components/PageHeader.vue'
-import type { DraftEstimate, Paginated, ProductOption, PurchaseCandidate, PurchaseCandidateItem, PurchaseDraft, SupplierOption } from '../types/api'
+import type { DraftEstimate, Paginated, ProductOption, PurchaseCandidate, PurchaseCandidateItem, PurchaseDraft, SupplierOption, SupplierProductCoverageRow } from '../types/api'
 import { formatMoney, formatQuantity } from '../utils/formatters'
 
 const rawText = ref('')
@@ -14,14 +14,26 @@ const candidate = ref<PurchaseCandidate | null>(null)
 const suppliers = ref<SupplierOption[]>([])
 const products = ref<ProductOption[]>([])
 const selectedSupplierIds = ref<number[]>([])
+const coverageRows = ref<SupplierProductCoverageRow[]>([])
 const draft = ref<PurchaseDraft | null>(null)
 const estimate = ref<DraftEstimate | null>(null)
 const successToast = ref('')
+const resetNotice = ref('')
+const inquiryInput = ref<HTMLTextAreaElement | null>(null)
 let successTimer: ReturnType<typeof setTimeout> | null = null
+let resetTimer: ReturnType<typeof setTimeout> | null = null
 
 const canEstimate = computed(() => Boolean(candidate.value?.items.length
   && candidate.value.items.every((item) => item.product_id && Number(item.quantity) > 0)
   && selectedSupplierIds.value.length))
+const estimateDisabledReason = computed(() => {
+  if (!candidate.value || canEstimate.value) return ''
+  if (!candidate.value.items.length) return '請至少保留一個採購品項。'
+  if (candidate.value.items.some((item) => !item.product_id)) return '尚有品項未選擇正式品項，請先手動選擇或移除。'
+  if (candidate.value.items.some((item) => Number(item.quantity) <= 0)) return '所有品項都必須填寫大於 0 的數量。'
+  if (!selectedSupplierIds.value.length) return '請至少選擇一間候選供應商。'
+  return ''
+})
 const rows = <T,>(data: Paginated<T> | T[]) => Array.isArray(data) ? data : data.results
 const supplierHasPrice = (supplier: DraftEstimate['suppliers'][number]) => supplier.items.some((item) => item.available)
 function dismissSuccess() {
@@ -53,6 +65,7 @@ async function parseRequirement() {
     const response = await api.post<PurchaseCandidate>('/inquiries/parse/', { raw_text: rawText.value })
     candidate.value = response.data
     selectedSupplierIds.value = response.data.supplier_candidates.map((row) => row.supplier_id).filter((id): id is number => id !== null)
+    coverageRows.value = response.data.supplier_product_coverage ?? []
     notice.value = response.data.assistant_message
   } catch (reason) {
     error.value = apiErrorMessage(reason, '需求解析失敗')
@@ -63,7 +76,79 @@ function addItem() {
   candidate.value?.items.push({ product_id: null, product_name: '', quantity: '1', unit_of_measure: 'EA', specifications: {} })
   estimate.value = null
 }
-function removeItem(index: number) { candidate.value?.items.splice(index, 1); estimate.value = null }
+async function refreshCoverage() {
+  if (!candidate.value) return
+  const items = candidate.value.items
+    .filter((item) => item.product_id && Number(item.quantity) > 0)
+    .map((item) => ({ product_id: item.product_id, quantity: item.quantity }))
+  if (!selectedSupplierIds.value.length || !items.length) {
+    coverageRows.value = []
+    return
+  }
+  try {
+    const response = await api.post<{ rows: SupplierProductCoverageRow[] }>(
+      '/supplier-product-coverage/',
+      { currency: candidate.value.currency, supplier_ids: selectedSupplierIds.value, items },
+    )
+    coverageRows.value = response.data.rows
+  } catch (reason) {
+    error.value = apiErrorMessage(reason, '無法更新供應能力對照')
+  }
+}
+const coverageProducts = computed(() => {
+  const grouped = new Map<number, { product_name: string; rows: SupplierProductCoverageRow[] }>()
+  for (const row of coverageRows.value) {
+    const group = grouped.get(row.product_id) ?? { product_name: row.product_name, rows: [] }
+    group.rows.push(row)
+    grouped.set(row.product_id, group)
+  }
+  return [...grouped.entries()].map(([product_id, value]) => ({ product_id, ...value }))
+})
+function itemSummary(item: PurchaseCandidateItem) {
+  return `${item.product_name || '未命名品項'}／數量 ${item.quantity ?? '未填'} ${item.unit_of_measure || ''}`.trim()
+}
+function recognizedItemSummary(item: PurchaseCandidateItem) {
+  const parts = [itemSummary(item)]
+  if (item.specifications.material) parts.push(`材質：${item.specifications.material}`)
+  if (item.specifications.size) parts.push(`尺寸：${item.specifications.size}`)
+  if (item.specifications.features) parts.push(`特色：${item.specifications.features}`)
+  return parts.join('／')
+}
+async function resetToNaturalInput(message: string) {
+  rawText.value = ''
+  candidate.value = null
+  selectedSupplierIds.value = []
+  coverageRows.value = []
+  draft.value = null
+  estimate.value = null
+  notice.value = ''
+  error.value = ''
+  resetNotice.value = message
+  if (resetTimer) clearTimeout(resetTimer)
+  resetTimer = setTimeout(() => { resetNotice.value = '' }, 5000)
+  await nextTick()
+  inquiryInput.value?.focus()
+}
+async function removeItem(index: number) {
+  if (!candidate.value) return
+  const item = candidate.value.items[index]
+  if (!item || !window.confirm(`確定要移除「${itemSummary(item)}」嗎？`)) return
+  if (candidate.value.items.length > 1) {
+    candidate.value.items.splice(index, 1)
+    estimate.value = null
+    await refreshCoverage()
+    return
+  }
+  loading.value = true
+  try {
+    if (draft.value) await api.delete(`/purchase-request-drafts/${draft.value.id}/`)
+    await resetToNaturalInput('已移除最後一個品項，請重新輸入採購需求。')
+  } catch (reason) {
+    error.value = apiErrorMessage(reason, '最後一個品項移除失敗')
+  } finally {
+    loading.value = false
+  }
+}
 function itemPayload(item: PurchaseCandidateItem) {
   return { product_id: item.product_id, quantity: item.quantity, unit_of_measure: item.unit_of_measure, specifications: item.specifications }
 }
@@ -99,6 +184,7 @@ async function submitDraft() {
     rawText.value = ''
     candidate.value = null
     selectedSupplierIds.value = []
+    coverageRows.value = []
     draft.value = null
     estimate.value = null
     notice.value = ''
@@ -110,7 +196,10 @@ async function submitDraft() {
   } finally { loading.value = false }
 }
 onMounted(loadCatalogs)
-onBeforeUnmount(() => { if (successTimer) clearTimeout(successTimer) })
+onBeforeUnmount(() => {
+  if (successTimer) clearTimeout(successTimer)
+  if (resetTimer) clearTimeout(resetTimer)
+})
 </script>
 
 <template>
@@ -122,10 +211,11 @@ onBeforeUnmount(() => { if (successTimer) clearTimeout(successTimer) })
       <p>可以包含多個品項與多間候選供應商。</p>
       <form @submit.prevent="parseRequirement">
         <label for="inquiry">採購需求</label>
-        <textarea id="inquiry" v-model.trim="rawText" rows="5" required placeholder="例如：跟優品科技、大和物產詢價，採購網布辦公椅 5 張和升降桌 3 張" />
+        <textarea id="inquiry" ref="inquiryInput" v-model.trim="rawText" rows="5" required placeholder="例如：跟優品科技、大和物產詢價，採購網布辦公椅 5 張和升降桌 3 張" />
         <div class="form-actions"><button class="primary-button" :disabled="loading || !rawText" type="submit">{{ loading ? '處理中…' : '解析需求' }}</button></div>
       </form>
     </div>
+    <p v-if="resetNotice" class="success-panel" role="status">{{ resetNotice }}</p>
     <p v-if="notice" class="success-panel" role="status">{{ notice }}</p>
     <p v-if="error" class="error-message" role="alert">{{ error }}</p>
 
@@ -135,18 +225,36 @@ onBeforeUnmount(() => { if (successTimer) clearTimeout(successTimer) })
         <div><label for="purpose">採購用途</label><input id="purpose" v-model="candidate.purpose" /></div>
         <div><label for="needed-by">需求日期（選填）</label><input id="needed-by" v-model="candidate.needed_by" type="date" /></div>
       </div>
-      <fieldset><legend>候選供應商</legend><div class="choice-grid"><label v-for="supplier in suppliers" :key="supplier.id" class="choice-card"><input v-model="selectedSupplierIds" type="checkbox" :value="supplier.id" /><span>{{ supplier.name }}</span></label></div></fieldset>
+      <fieldset :class="{ 'invalid-group': !selectedSupplierIds.length }" :aria-invalid="!selectedSupplierIds.length"><legend>候選供應商</legend><div class="choice-grid"><label v-for="supplier in suppliers" :key="supplier.id" class="choice-card"><input v-model="selectedSupplierIds" type="checkbox" :value="supplier.id" @change="refreshCoverage" /><span>{{ supplier.name }}</span></label></div><small v-if="!selectedSupplierIds.length" class="field-error">請至少選擇一間候選供應商。</small></fieldset>
       <div class="section-heading"><div><h3>明細品項</h3><p>數量與規格都可在試算前修正。</p></div><button class="secondary-button" type="button" @click="addItem">＋ 新增品項</button></div>
       <article v-for="(item, index) in candidate.items" :key="index" class="line-editor">
-        <div class="line-editor-heading"><strong>品項 {{ index + 1 }}</strong><button class="text-button danger" type="button" @click="removeItem(index)">移除</button></div>
+        <div class="line-editor-heading">
+          <div class="line-editor-title"><strong>品項 {{ index + 1 }}</strong><span class="match-status" :class="{ matched: item.product_id }">{{ item.product_id ? '已匹配' : '待選擇' }}</span></div>
+          <button class="text-button danger remove-item-button" type="button" @click="removeItem(index)">移除</button>
+        </div>
+        <div class="recognition-summary"><small>AI 辨識內容</small><span>{{ recognizedItemSummary(item) }}</span></div>
+        <p v-if="!item.product_id" class="item-match-warning" role="alert"><strong>尚未找到正式品項</strong><span>請從下方手動選擇其他品項，或移除此品項。</span></p>
         <div class="editor-grid three-columns">
-          <div><label :for="`product-${index}`">品項</label><select :id="`product-${index}`" v-model="item.product_id"><option :value="null">請選擇</option><option v-for="product in products" :key="product.id" :value="product.id">{{ product.name }}</option></select></div>
-          <div><label :for="`quantity-${index}`">數量</label><input :id="`quantity-${index}`" v-model="item.quantity" min="0.001" step="0.001" type="number" /></div>
+          <div><label :for="`product-${index}`">品項</label><select :id="`product-${index}`" v-model="item.product_id" :class="{ 'invalid-field': !item.product_id }" :aria-invalid="!item.product_id" required @change="refreshCoverage"><option :value="null">請選擇</option><option v-for="product in products" :key="product.id" :value="product.id">{{ product.name }}</option></select><small v-if="!item.product_id" class="field-error">請選擇正式品項。</small></div>
+          <div><label :for="`quantity-${index}`">數量</label><input :id="`quantity-${index}`" v-model="item.quantity" :class="{ 'invalid-field': Number(item.quantity) <= 0 }" :aria-invalid="Number(item.quantity) <= 0" min="0.001" step="0.001" type="number" required @change="refreshCoverage" /><small v-if="Number(item.quantity) <= 0" class="field-error">請填寫大於 0 的數量。</small></div>
           <div><label :for="`unit-${index}`">單位</label><input :id="`unit-${index}`" v-model="item.unit_of_measure" /></div>
         </div>
         <div class="editor-grid three-columns specification-fields"><div><label>材質</label><input v-model="item.specifications.material" /></div><div><label>尺寸</label><input v-model="item.specifications.size" /></div><div><label>特色／必要條件</label><input v-model="item.specifications.features" /></div></div>
       </article>
-      <div class="form-actions"><button class="primary-button" :disabled="loading || !canEstimate" type="button" @click="saveAndEstimate">儲存草稿並試算</button></div>
+      <section v-if="coverageProducts.length" class="coverage-section" aria-labelledby="coverage-heading">
+        <div class="coverage-heading"><div><small>供應能力對照</small><h3 id="coverage-heading">每個品項由哪些供應商供應</h3></div><span>僅供確認，不等於正式報價</span></div>
+        <div class="coverage-grid">
+          <article v-for="product in coverageProducts" :key="product.product_id" class="coverage-card">
+            <h4>{{ product.product_name }}</h4>
+            <div v-for="row in product.rows" :key="row.supplier_id" class="coverage-row">
+              <strong>{{ row.supplier_name }}</strong>
+              <span class="coverage-status" :class="`coverage-${row.status}`">{{ row.label }}</span>
+              <small v-if="row.unit_price">參考單價 {{ formatMoney(row.unit_price, row.currency) }}</small>
+            </div>
+          </article>
+        </div>
+      </section>
+      <div class="estimate-action-row"><small v-if="estimateDisabledReason" role="status">{{ estimateDisabledReason }}</small><button class="primary-button" :disabled="loading || !canEstimate" :title="estimateDisabledReason" type="button" @click="saveAndEstimate">儲存草稿並試算</button></div>
     </div>
 
     <div v-if="estimate" class="estimate-section">

@@ -95,6 +95,10 @@ from services.rfq_quote_service import (
 from services.rfq_quote_service import (
     create_quote as create_supplier_quote,
 )
+from services.supplier_product_coverage_service import (
+    SupplierProductCoverageError,
+    build_supplier_product_coverage,
+)
 
 
 class RfqQuoteErrorMixin:
@@ -495,6 +499,42 @@ class InquiryCandidateParseView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except InquiryTriggerError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        coverage = build_supplier_product_coverage({
+            "currency": result.get("currency", "TWD"),
+            "supplier_ids": [
+                row["supplier_id"]
+                for row in result.get("supplier_candidates", [])
+                if row.get("supplier_id") is not None
+            ],
+            "items": [
+                row
+                for row in result.get("items", [])
+                if row.get("product_id") is not None and row.get("quantity") is not None
+            ],
+        })
+        result["supplier_product_coverage"] = coverage["rows"]
+        return Response(result)
+
+
+class SupplierProductCoverageView(APIView):
+    """建立草稿前，回傳目前選擇的供應商與品項供應能力矩陣。"""
+
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if not user_has_permission(request.user, "purchase_request.create"):
+            return Response(
+                {"detail": "沒有執行此操作的權限", "code": "permission_denied"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            result = build_supplier_product_coverage(request.data)
+        except (SupplierProductCoverageError, TypeError, ValueError) as exc:
+            return Response(
+                {"detail": str(exc), "code": "invalid_coverage_request"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response(result)
 
 
