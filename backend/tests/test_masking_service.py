@@ -139,6 +139,54 @@ def test_unmask_text_empty_returns_as_is():
     assert masking_service.unmask_text(None, {}) is None
 
 
+def test_mask_candidate_text_masks_multiple_suppliers_and_amount(supplier_a, supplier_b):
+    raw = "向優品科技、優品資訊詢價，預算 TWD 30,000"
+
+    result = masking_service.mask_candidate_text(raw)
+
+    assert result["outcome"] == "masked"
+    assert "優品科技" not in result["masked_text"]
+    assert "優品資訊" not in result["masked_text"]
+    assert "TWD 30,000" not in result["masked_text"]
+    assert result["mapping"] == {
+        "SUP_001": "優品科技",
+        "SUP_002": "優品資訊",
+        "AMOUNT_001": "TWD 30,000",
+    }
+
+
+def test_mask_candidate_text_empty_raises():
+    with pytest.raises(masking_service.MaskingError):
+        masking_service.mask_candidate_text("   ")
+
+
+def test_mask_candidate_text_rejects_mixed_known_and_unknown_supplier(supplier_a):
+    result = masking_service.mask_candidate_text(
+        "跟優品科技、未建檔公司詢價，採購辦公椅 5 張",
+    )
+
+    assert result == {"outcome": "supplier_not_found", "masked_text": None, "mapping": {}}
+
+
+def test_unmask_payload_restores_nested_strings_without_mutating_non_strings():
+    payload = {
+        "purpose": "向 SUP_001 採購",
+        "suppliers": [{"name": "SUP_001"}],
+        "items": [{"quantity": 5, "specifications": {"budget": "AMOUNT_001"}}],
+        "needed_by": None,
+    }
+
+    result = masking_service.unmask_payload(
+        payload, {"SUP_001": "優品科技", "AMOUNT_001": "30000元"},
+    )
+
+    assert result["purpose"] == "向 優品科技 採購"
+    assert result["suppliers"][0]["name"] == "優品科技"
+    assert result["items"][0]["quantity"] == 5
+    assert result["items"][0]["specifications"]["budget"] == "30000元"
+    assert result["needed_by"] is None
+
+
 def test_mask_text_stores_requester_on_fuzzy_review(supplier_a, user):
     raw = "跟優品科採購A產品"
     result = masking_service.mask_text(raw, requester_id=user.id)

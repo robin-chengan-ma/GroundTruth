@@ -1,11 +1,4 @@
-"""FR-1：接收自然語言詢價文字，觸發 n8n Webhook 啟動主流程。
-
-同步呼叫 n8n Webhook 並把 n8n 最終回應原樣傳回；n8n 內部的遮罩/幻覺驗證/簽核路由等步驟
-屬於各自 Phase 範圍。
-
-user_id：詢價發起人，Phase 3 起一路傳給 n8n → quotes/calculate/ 用來建立 Quote 資料列
-（Vue＋JWT 使用者驗證留待 Phase 4，這裡先由呼叫端明確帶入，見 docs/ADR/discuss/main-flow.md）。
-"""
+"""自然語言詢價與新版採購需求候選解析服務。"""
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -15,6 +8,7 @@ from django.conf import settings
 from apps.crm.models import Supplier
 from apps.erp.models import Product
 from repositories.inquiry import request_candidate_parse
+from services.masking_service import mask_candidate_text, unmask_payload
 
 INQUIRY_TIMEOUT_SECONDS = 30
 
@@ -126,15 +120,23 @@ def _resolve_product(name):
 
 
 def parse_purchase_request_candidate(raw_text: str, *, user_id: int) -> dict:
-    """FR-3：解析及對應主檔，只回傳可編輯候選資料，不建立單據。"""
+    """FR-3／NFR-1：遮罩後解析並對應主檔，只回傳候選資料，不建立單據。"""
     if not raw_text or not raw_text.strip():
         raise InquiryValidationError("採購需求不可為空")
+
+    masking_result = mask_candidate_text(raw_text.strip(), requester_id=user_id)
+    if masking_result["outcome"] == "supplier_fuzzy_match":
+        raise InquiryValidationError("供應商名稱需要人工複核，請至人工複核佇列處理")
+    if masking_result["outcome"] == "supplier_not_found":
+        raise InquiryValidationError("找不到可確認的供應商，請檢查名稱後再試")
+
     try:
-        parsed = request_candidate_parse(raw_text.strip(), user_id=user_id)
+        parsed = request_candidate_parse(masking_result["masked_text"], user_id=user_id)
     except (requests.RequestException, requests.JSONDecodeError) as exc:
         raise InquiryTriggerError("AI 需求解析失敗，請稍後再試") from exc
     if not isinstance(parsed, dict):
         raise InquiryTriggerError("AI 候選資料格式錯誤，請重新解析")
+    parsed = unmask_payload(parsed, masking_result["mapping"])
 
     supplier_rows = _candidate_list(parsed, "suppliers")
     item_rows = _candidate_list(parsed, "items")

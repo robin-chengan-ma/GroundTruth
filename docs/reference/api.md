@@ -506,7 +506,7 @@ RFQ 發出時建立六項案件快照：實際總成本 30%、規格與品質 30
 
 ## POST /api/v1/inquiries/parse/
 
-FR-3：將自然語言需求送至 n8n v2（`N8N_INQUIRY_PARSE_WEBHOOK_URL`），並將 AI 候選名稱與當下生效主檔做唯一精確對應。只回傳可編輯候選結構，不建立 Purchase Request、legacy Quote 或其他正式單據。
+FR-3／NFR-1：Django 先以固定程式將自然語言中的已建檔供應商名稱與具金額語境的數字 Token 化，再將遮罩文字送至 n8n v2（`N8N_INQUIRY_PARSE_WEBHOOK_URL`）。n8n 回傳後由 Django 在單次請求記憶體內遞迴還原候選字串，並將候選名稱與當下生效主檔做唯一精確對應；遮罩 mapping 不寫入 DB、log 或 API Response。只回傳可編輯候選結構，不建立 Purchase Request、legacy Quote 或其他正式單據。
 
 **認證／權限**：Bearer Access Token；需 `purchase_request.create`。發起人固定取自 JWT，Request 中的 `user_id` 不採信。
 
@@ -531,7 +531,14 @@ FR-3：將自然語言需求送至 n8n v2（`N8N_INQUIRY_PARSE_WEBHOOK_URL`）�
 
 **Response（200）**：回傳 `purpose`、`needed_by`、`currency`、`assistant_message`、`items`、`supplier_candidates`、`missing_fields`與 `ready_for_draft`。`items[].product_id` 及 `supplier_candidates[].supplier_id` 只在名稱唯一精確對應且主檔可用時回傳，其餘為 `null` 並列入 `missing_fields`。數量必須大於 0 且最多三位小數。
 
-**錯誤**：空白輸入 400；無權限 403；n8n 連線、非 JSON 或候選契約錯誤 502。錯誤訊息不顯示內部 URL、Key 或 Stack Trace。
+**驗證與錯誤**：
+
+- 空白輸入回 400。
+- 找不到可確認的供應商，或同一顯式供應商片段混有已建檔與未建檔名稱時回 400，且不呼叫 n8n。
+- 僅模糊命中的供應商建立既有人工複核案件並回 400，不把原始名稱送往 n8n。
+- 無權限回 403。
+- n8n 連線、非 JSON 或候選契約錯誤回 502。
+- 錯誤訊息不得顯示內部 URL、Key、原始外部錯誤或 Stack Trace。
 
 ## POST /api/v1/inquiries/trigger/
 

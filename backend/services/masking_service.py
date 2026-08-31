@@ -41,6 +41,10 @@ _AMOUNT_PATTERN = re.compile(
     r"(?:NT\$|US\$|\$|TWD|USD)\s?\d[\d,]*(?:\.\d+)?"
     r"|\d[\d,]*(?:\.\d+)?\s?(?:元|塊錢|塊)"
 )
+_SUPPLIER_CLAUSE_PATTERN = re.compile(
+    r"(?:跟|向|找|由)\s*(?P<names>[^，。；\n]+?)\s*(?:詢價|採購|購買|買|訂購|拿貨)"
+)
+_SUPPLIER_SEPARATOR_PATTERN = re.compile(r"[\s、,，和與及/&]+")
 
 
 class MaskingError(Exception):
@@ -120,6 +124,48 @@ def mask_amounts_only(raw_text: str) -> dict:
     return {"masked_text": masked, "mapping": mapping}
 
 
+def mask_candidate_text(raw_text: str, requester_id=None) -> dict:
+    """遮罩新版採購需求候選解析文字，支援同時指定多間已知供應商。
+
+    legacy `mask_text` 的多筆精確命中代表單一供應商流程存在歧義；新版需求本來就允許
+    多候選供應商，因此會將文字中所有完整命中的供應商分別 Token 化。完全沒有精確命中時，
+    才沿用既有模糊比對／查無供應商分流，避免把無法確認的名稱送往外部 LLM。
+    """
+    if not raw_text or not raw_text.strip():
+        raise MaskingError("raw_text 不可為空")
+
+    suppliers = [supplier for supplier in SupplierRepository.all() if supplier.name]
+    exact_matches = [supplier for supplier in suppliers if supplier.name in raw_text]
+    if not exact_matches:
+        return mask_text(raw_text, requester_id=requester_id)
+    if _has_unmatched_supplier_clause(raw_text, exact_matches):
+        return {"outcome": "supplier_not_found", "masked_text": None, "mapping": {}}
+
+    # 先處理較長名稱，避免供應商名稱互為子字串時短名稱先取代而洩漏剩餘文字。
+    exact_matches.sort(key=lambda supplier: (-len(supplier.name), supplier.id))
+    masked_text = raw_text
+    mapping = {}
+    for index, supplier in enumerate(exact_matches, start=1):
+        token = f"SUP_{index:03d}"
+        masked_text = masked_text.replace(supplier.name, token)
+        mapping[token] = supplier.name
+
+    masked_text, amount_mapping = _mask_amounts(masked_text)
+    mapping.update(amount_mapping)
+    return {"outcome": "masked", "masked_text": masked_text, "mapping": mapping}
+
+
+def _has_unmatched_supplier_clause(raw_text: str, exact_matches) -> bool:
+    """保守檢查顯式供應商片段，避免已知與未知供應商混寫時讓未知名稱外洩。"""
+    for clause_match in _SUPPLIER_CLAUSE_PATTERN.finditer(raw_text):
+        remaining = clause_match.group("names")
+        for supplier in exact_matches:
+            remaining = remaining.replace(supplier.name, "")
+        if _SUPPLIER_SEPARATOR_PATTERN.sub("", remaining):
+            return True
+    return False
+
+
 def unmask_text(masked_text: str, mapping: dict) -> str:
     """把遮罩文字中的 Token 換回真實值（供 Gemini 回應後還原用）。"""
     if not masked_text:
@@ -129,6 +175,17 @@ def unmask_text(masked_text: str, mapping: dict) -> str:
     for token, real_value in mapping.items():
         result = result.replace(token, real_value)
     return result
+
+
+def unmask_payload(value, mapping: dict):
+    """遞迴還原 n8n 候選 payload 內所有字串，不修改數字、布林或空值。"""
+    if isinstance(value, str):
+        return unmask_text(value, mapping)
+    if isinstance(value, list):
+        return [unmask_payload(item, mapping) for item in value]
+    if isinstance(value, dict):
+        return {key: unmask_payload(item, mapping) for key, item in value.items()}
+    return value
 
 
 def _find_fuzzy_supplier_candidates(raw_text: str, suppliers) -> list:
