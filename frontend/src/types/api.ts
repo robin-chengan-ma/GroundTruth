@@ -45,6 +45,37 @@ export interface Approval {
   updated_at: string
 }
 
+export interface ApprovalStep {
+  id: number
+  sequence: number
+  step_type: 'waiver_exception' | 'amount_approval'
+  role: { id: number; code: string }
+  status: 'pending' | 'claimed' | 'approved' | 'rejected'
+  claimed_by: { id: number; name: string } | null
+  claimed_at: string | null
+  decided_by: { id: number; name: string } | null
+  decided_at: string | null
+  decision_reason: string | null
+  can_claim: boolean
+  can_decide: boolean
+}
+
+export interface ApprovalCase {
+  id: number
+  award_id: number
+  request_id: number
+  request_no: string
+  purpose: string
+  requester: { id: number; name: string }
+  policy: { id: number; name: string }
+  total_amount: string
+  currency: string
+  status: 'pending' | 'in_progress' | 'approved' | 'rejected' | 'cancelled'
+  submitted_at: string
+  decided_at: string | null
+  steps: ApprovalStep[]
+}
+
 export interface ManualReview {
   id: number
   quote: number | null

@@ -8,6 +8,7 @@ const labels: Record<string, string> = {
   pending: '待處理',
   unclaimed: '未認領',
   claimed: '處理中',
+  in_progress: '進行中',
   resolved: '已處理',
   approved: '已核准',
   rejected: '已駁回',

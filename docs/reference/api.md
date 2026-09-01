@@ -37,8 +37,9 @@ rotation／撤銷狀態，不保存 Token 明文。
 | suppliers、products | 已登入使用者；n8n 可用內部 API Key 唯讀查詢 | 僅 admin 可用通用 CRUD 寫入；內部服務不可寫入 |
 | inventory | 已登入使用者 | 僅 admin 可用通用 CRUD 寫入 |
 | purchase-suggestions | 已登入使用者 | 通用 API 唯讀；具 `purchase_request.create` 可轉單，僅 admin 可忽略未轉單建議 |
-| quotes | employee 僅本人；簽核人可見路由至其角色的案件；admin 可見全部 | 通用 API 唯讀；本人僅能呼叫 `withdraw` 撤回待簽核案件 |
-| approvals | 簽核人可見路由至其角色及本人認領案件；admin 可見全部 | 通用 API 唯讀；只能用 `claim`／`decide` action，且不得跨角色代簽 |
+| quotes | legacy 歷史查詢沿用既有本人／角色／admin 範圍 | 通用 API 唯讀；legacy 建單與驗證 command 已停用，撤回 action 待後續切換 |
+| approval-cases、approval-steps | `approval.read_all` 只見有效角色對應案件；`audit.read` 可唯讀全部 | 僅符合目標角色及 permission codes 者可認領／決議；決議理由必填，禁止申請人自簽與跨角色代簽 |
+| approvals | legacy 歷史查詢沿用既有角色／admin 範圍 | `claim`／`decide` 已停用並回 410；不再接受正式寫入 |
 | purchase-request-drafts | 具 `purchase_request.read_own` 者只見本人草稿 | create／edit_draft／submit 分別檢查對應 RBAC；只有 draft 可修改或刪除 |
 | purchase-requests | 具 `purchase_request.read_own` 者只見本人全部需求 | 唯讀清單；正式狀態異動必須使用各流程明確 action，不提供通用 CRUD |
 | rfqs、supplier-quotes | 具 `rfq.manage`／`supplier_quote.manage` 的採購人員 | RFQ 只能由明確 issue action 發出；報價只能建立草稿、提交或建立 revision，不提供通用更新／刪除 |
@@ -361,7 +362,9 @@ RFQ 發出時建立六項案件快照：實際總成本 30%、規格與品質 30
 {
   "id": 801,
   "award_id": 701,
+  "request_id": 501,
   "request_no": "PR-DEMO-001",
+  "purpose": "汰換會議室設備",
   "requester": {"id": 11, "name": "範例申請人"},
   "policy": {"id": 3, "name": "TWD 中額 Demo"},
   "total_amount": "9900.00",
@@ -374,7 +377,9 @@ RFQ 發出時建立六項案件快照：實際總成本 30%、規格與品質 30
       "step_type": "waiver_exception",
       "role": {"id": 8, "code": "procurement_exception_reviewer"},
       "status": "pending",
-      "claimed_by": null
+      "claimed_by": null,
+      "can_claim": true,
+      "can_decide": false
     },
     {
       "id": 902,
@@ -382,7 +387,9 @@ RFQ 發出時建立六項案件快照：實際總成本 30%、規格與品質 30
       "step_type": "amount_approval",
       "role": {"id": 3, "code": "approver_10k"},
       "status": "pending",
-      "claimed_by": null
+      "claimed_by": null,
+      "can_claim": false,
+      "can_decide": false
     }
   ]
 }
@@ -796,12 +803,16 @@ FR-6a／FR-6c：決議案件（核准／駁回），僅提供 SPEC 定義的有�
 本人可撤回狀態為 `pending_approval` 的採購單。成功時 Quote 與 Approval 同步改為 `cancelled` 並寫入
 Audit Log；非本人回 400，案件不存在回 404，已結案或狀態不符回 409。
 
-### POST /api/v1/approvals/{id}/claim/
+### POST /api/v1/approvals/{id}/claim/／POST /api/v1/approvals/{id}/decide/
 
-登入使用者只能認領路由角色與自身角色相同、仍為 `pending` 且尚未被認領的案件。admin 只能認領
-路由到 admin 的大額案件，不能跨角色代簽。成功回 200；資格不符回 400；已認領／結案回 409。
+legacy Approval command 已停用。通過 Bearer Access Token 認證後統一回 `410 Gone`：
 
-### POST /api/v1/approvals/{id}/decide/
+```json
+{
+  "detail": "舊版詢價建單流程已停用，請改用採購需求流程",
+  "code": "legacy_command_retired"
+}
+```
 
-只有已認領該案件的使用者可送出 `{"decision":"approved"}` 或 `{"decision":"rejected"}`。成功時
-Approval 與 Quote 同步轉為 approved／rejected 並寫入 Audit Log；無效決議回 400，非認領者或已結案回 409。
+未通過認證仍回 401。legacy Approval 的 GET 清單／詳情暫時保留歷史查詢；正式簽核一律改用
+`approval-cases`／`approval-steps`。

@@ -30,13 +30,7 @@ from services.approval_case_service import (
     serialize_case,
     serialize_step,
 )
-from services.approval_service import (
-    ApprovalConflictError,
-    ApprovalError,
-    claim_approval,
-    decide_approval,
-    withdraw_quote,
-)
+from services.approval_service import ApprovalConflictError, ApprovalError, withdraw_quote
 from services.award_selection_service import (
     AwardSelectionConflict,
     AwardSelectionError,
@@ -182,14 +176,14 @@ class ApprovalCaseViewSet(ApprovalWorkflowErrorMixin, viewsets.ViewSet):
             cases = list_accessible_cases(request.user)
         except ApprovalWorkflowError as exc:
             return self._approval_workflow_error_response(exc)
-        return Response([serialize_case(case) for case in cases])
+        return Response([serialize_case(case, request.user) for case in cases])
 
     def retrieve(self, request, pk=None):
         try:
             case = get_accessible_case(request.user, pk)
         except ApprovalWorkflowError as exc:
             return self._approval_workflow_error_response(exc)
-        return Response(serialize_case(case))
+        return Response(serialize_case(case, request.user))
 
 
 class ApprovalStepViewSet(ApprovalWorkflowErrorMixin, viewsets.ViewSet):
@@ -202,7 +196,7 @@ class ApprovalStepViewSet(ApprovalWorkflowErrorMixin, viewsets.ViewSet):
             step = claim_step(request.user, pk)
         except ApprovalWorkflowError as exc:
             return self._approval_workflow_error_response(exc)
-        return Response(serialize_step(step))
+        return Response(serialize_step(step, request.user))
 
     @action(detail=True, methods=["post"])
     def decide(self, request, pk=None):
@@ -215,7 +209,7 @@ class ApprovalStepViewSet(ApprovalWorkflowErrorMixin, viewsets.ViewSet):
             )
         except ApprovalWorkflowError as exc:
             return self._approval_workflow_error_response(exc)
-        return Response(serialize_step(step))
+        return Response(serialize_step(step, request.user))
 
 
 class PurchaseOrderViewSet(viewsets.ViewSet):
@@ -495,23 +489,11 @@ class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def claim(self, request, pk=None):
-        try:
-            approval = claim_approval(pk, request.user)
-        except ApprovalConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        except ApprovalError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ApprovalSerializer(approval).data)
+        return legacy_command_retired_response()
 
     @action(detail=True, methods=["post"])
     def decide(self, request, pk=None):
-        try:
-            approval = decide_approval(pk, request.user, request.data.get("decision"))
-        except ApprovalConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        except ApprovalError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(ApprovalSerializer(approval).data)
+        return legacy_command_retired_response()
 
 
 class InquiryTriggerView(APIView):

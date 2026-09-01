@@ -38,58 +38,6 @@ def test_employee_quote_list_only_contains_own_quotes(api_client, user, supplier
 
 
 @pytest.mark.django_db
-def test_approver_can_claim_and_decide_routed_approval(api_client, user, supplier, product):
-    role = Role.objects.create(role="approver_10k", approval_amount_limit=Decimal(10000))
-    approver = User.objects.create(name="Approver", email="approver@example.com", password="x", role=role)
-    quote = Quote.objects.create(
-        user=user,
-        supplier=supplier,
-        product=product,
-        quantity=1,
-        price=5000,
-        total_amount=5000,
-        currency="TWD",
-        status=Quote.Status.PENDING_APPROVAL,
-    )
-    approval = route_quote(quote)
-    authorization = bearer(approver)
-
-    claim = api_client.post(f"/api/v1/approvals/{approval.id}/claim/", HTTP_AUTHORIZATION=authorization)
-    decide = api_client.post(
-        f"/api/v1/approvals/{approval.id}/decide/",
-        {"decision": "approved"},
-        HTTP_AUTHORIZATION=authorization,
-    )
-
-    assert claim.status_code == 200
-    assert decide.status_code == 200
-    assert decide.data["status"] == "approved"
-
-
-@pytest.mark.django_db
-def test_admin_cannot_claim_other_role_approval(api_client, user, supplier, product, role_admin):
-    Role.objects.create(role="approver_10k", approval_amount_limit=Decimal(10000))
-    admin = User.objects.create(name="Admin", email="admin@example.com", password="x", role=role_admin)
-    quote = Quote.objects.create(
-        user=user,
-        supplier=supplier,
-        product=product,
-        quantity=1,
-        price=5000,
-        total_amount=5000,
-        currency="TWD",
-        status=Quote.Status.PENDING_APPROVAL,
-    )
-    approval = route_quote(quote)
-
-    response = api_client.post(
-        f"/api/v1/approvals/{approval.id}/claim/", HTTP_AUTHORIZATION=bearer(admin)
-    )
-
-    assert response.status_code == 400
-
-
-@pytest.mark.django_db
 def test_requester_can_withdraw_through_api(api_client, user, supplier, product):
     Role.objects.create(role="approver_10k", approval_amount_limit=Decimal(10000))
     quote = Quote.objects.create(

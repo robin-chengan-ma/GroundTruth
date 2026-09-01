@@ -104,6 +104,26 @@ tr:last-child td { border-bottom: 0; }
 .summary-panel p, .comparison p { margin-bottom: 0; line-height: 1.6; }
 .approval-card footer { min-height: 44px; justify-content: flex-end; }
 .approval-card footer span { margin-right: auto; color: #687386; font-size: 12px; }
+.approval-case-list { display: grid; gap: 22px; }
+.approval-case-card { padding: 26px; }
+.approval-case-card > header, .approval-step > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.approval-case-card h2 { margin: 5px 0 0; font-size: 22px; }
+.approval-case-card small, .approval-step small { display: block; margin-top: 5px; color: #7b8798; }
+.approval-case-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 22px 0; }
+.approval-case-summary div { padding: 13px; border-radius: 9px; background: #f6f8fa; }
+.approval-case-summary dt { color: #7b8798; font-size: 11px; }
+.approval-case-summary dd { margin: 5px 0 0; font-weight: 750; overflow-wrap: anywhere; }
+.approval-steps { display: grid; gap: 12px; }
+.approval-step { padding: 18px; border: 1px solid #e2e7ed; border-radius: 11px; }
+.approval-step > footer { display: grid; gap: 12px; margin-top: 16px; }
+.approval-step > footer > .primary-button { justify-self: end; }
+.approval-step label { display: grid; gap: 7px; font-weight: 750; }
+.approval-step textarea { resize: vertical; }
+.step-actor, .step-decision { margin: 12px 0 0; color: #687386; }
+.step-decision { padding: 10px 12px; border-radius: 8px; background: #f6f8fa; }
+.approval-decision-actions { display: flex; justify-content: flex-end; gap: 10px; }
+@media (max-width: 800px) { .approval-case-summary { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .approval-case-summary { grid-template-columns: 1fr; } }
 .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .comparison pre { overflow-wrap: anywhere; white-space: pre-wrap; }
 .login-page { min-height: 100vh; display: grid; grid-template-columns: .95fr 1.05fr; }

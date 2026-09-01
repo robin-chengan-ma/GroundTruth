@@ -276,7 +276,37 @@ def get_accessible_case(user, case_id):
         raise ApprovalWorkflowNotFound("找不到指定的簽核案件") from exc
 
 
-def serialize_step(step):
+def _step_capabilities(step, user):
+    permissions = get_permission_codes(user)
+    active_role_ids = _active_role_ids(user)
+    actor_allowed = (
+        step.role_id in active_role_ids
+        and step.approval_case.requester_id != user.id
+        and {"approval.claim", "approval.decide"} <= permissions
+    )
+    if actor_allowed and step.step_type == ApprovalStep.StepType.WAIVER_EXCEPTION:
+        original_approvers = {
+            link.quote_requirement_result.waived_by_id for link in step.waivers.all()
+        }
+        actor_allowed = "requirement.waive" in permissions and user.id not in original_approvers
+    previous_approved = not step.approval_case.steps.filter(
+        sequence__lt=step.sequence
+    ).exclude(status=ApprovalStep.Status.APPROVED).exists()
+    return {
+        "can_claim": actor_allowed and previous_approved and step.status == ApprovalStep.Status.PENDING,
+        "can_decide": (
+            actor_allowed
+            and step.status == ApprovalStep.Status.CLAIMED
+            and step.claimed_by_id == user.id
+        ),
+    }
+
+
+def serialize_step(step, user=None):
+    capabilities = _step_capabilities(step, user) if user is not None else {
+        "can_claim": False,
+        "can_decide": False,
+    }
     return {
         "id": step.id,
         "sequence": step.sequence,
@@ -292,15 +322,17 @@ def serialize_step(step):
         ),
         "decided_at": step.decided_at,
         "decision_reason": step.decision_reason,
+        **capabilities,
     }
 
 
-def serialize_case(case):
+def serialize_case(case, user=None):
     return {
         "id": case.id,
         "award_id": case.award_id,
         "request_id": case.award.rfq.request_id,
         "request_no": case.award.rfq.request.request_no,
+        "purpose": case.award.rfq.request.purpose,
         "requester": {"id": case.requester_id, "name": case.requester.name},
         "policy": {"id": case.policy_id, "name": case.policy.name},
         "total_amount": f"{case.total_amount:.2f}",
@@ -308,5 +340,5 @@ def serialize_case(case):
         "status": case.status,
         "submitted_at": case.submitted_at,
         "decided_at": case.decided_at,
-        "steps": [serialize_step(step) for step in case.steps.all().order_by("sequence")],
+        "steps": [serialize_step(step, user) for step in case.steps.all().order_by("sequence")],
     }

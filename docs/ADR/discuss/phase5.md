@@ -5,7 +5,7 @@ updated: 2026-09-01
 # Phase 5 前端與應用切換
 
 ## 2026-08-31 [標籤：使用者／AI] Phase 5.0 應用切換與安全收斂
-**狀態**：accepted
+**狀態**：superseded（階段拆分與追蹤方式由 2026-09-01「剩餘 Roadmap 收斂為三個正式階段」取代；技術決策併入新 Phase 5）
 **背景**：Phase 4.1 已完成企業採購核心 Schema、Migration、後端 command 與 D2 採購需求介面，但全專案盤點確認正式應用仍混用 legacy Quote／Approval：n8n v2 候選解析直接傳送原始文字、舊 Quote command API 仍可寫入、簽核與人工複核仍接舊資料模型，部分授權仍以單一 role 或 admin 判斷，且 DRF 預設權限仍為 `AllowAny`。若直接擴充 Phase 5 畫面，前端會建立在新舊混合契約上並造成後續重構。
 **討論內容**：Robin 同意在 Phase 5 正式業務頁面前，先增加 Phase 5.0，完成新核心接管、安全邊界與共用 API 契約；legacy 資料保留供歷史追溯，不刪除既有 Migration 或資料表。
 **決策**：
@@ -65,3 +65,23 @@ updated: 2026-09-01
 **決策**：Robin 核准分段切換及 retired endpoint 契約。P5.0-B3A 先阻擋沒有新版前端呼叫者的 `POST /inquiries/trigger/`、`POST /quotes/calculate/` 與 `POST /quotes/verify-hallucination/`，通過原本 JWT 或內部 API Key 認證後統一回 `410 Gone`、錯誤碼 `legacy_command_retired`，且不得呼叫 n8n、建立或修改 Quote、建立 Approval 或人工複核案件。未通過認證仍回 401。後續將簽核頁與人工複核切到 Approval Case／Step，再封鎖其餘 legacy action；舊 Quote／Approval 的 GET 查詢保留唯讀歷史能力。
 **理由**：分段切換可先消除雙寫入口，又避免直接封鎖現行簽核工作區造成操作中斷。
 **後果**：P5.0-B3A 不修改資料庫或 n8n workflow；若舊 workflow 繼續呼叫上述 production endpoint，將收到明確 410 而不再產生 legacy 資料。P5.0-C 完成前，舊簽核與人工複核 action 暫時維持可用，避免中斷目前前端工作區。
+
+## 2026-09-01 [標籤：使用者／AI] P5.0-C1 簽核工作區切換新版核心
+**狀態**：accepted
+**背景**：新版 `ApprovalCase`／`ApprovalStep` 已具備多關卡、權限碼、禁止自簽、順序控制、認領競態與不可覆寫決議，但 Vue 簽核工作區仍讀寫 legacy `Approval`，使舊簽核 command 無法安全停用。
+**討論內容**：Robin 核准先完成 P5.0-C1，再處理人工複核與全域授權收斂。這一切片不修改人工複核、不刪除舊表、不新增 Migration。
+**決策**：Vue 簽核工作區改讀 `GET /approval-cases/`，認領與決議改用 `POST /approval-steps/{id}/claim/`、`POST /approval-steps/{id}/decide/`；畫面顯示新版案件及完整關卡狀態，決議必須填寫理由。完成切換後，legacy `POST /approvals/{id}/claim/` 與 `POST /approvals/{id}/decide/` 通過既有 JWT 認證後統一回 `410 Gone`／`legacy_command_retired`，legacy GET 保留歷史唯讀。
+**理由**：先移除正式前端對舊 command 的依賴，才能停止 legacy 簽核寫入，同時保留舊資料的展示與回退查閱能力。
+**後果**：新版簽核畫面不再依賴 legacy Quote 的摘要、單價或價格偏離欄位；人工複核仍暫時維持舊流程，待 P5.0-C2 切換後再停用。
+
+## 2026-09-01 [標籤：使用者／AI] 剩餘 Roadmap 收斂為三個正式階段
+**狀態**：accepted
+**背景**：全面盤點確認目前仍有人工複核、legacy 寫入與舊命名、權限收斂、完整業務 API、企業採購操作頁面、通知、部署及全流程驗收等工作。既有 Phase 5.0 再細分 A／B／C 的追蹤方式讓完成範圍與剩餘範圍難以辨識，且容易把局部完成誤認為整體完成。
+**討論內容**：Robin 要求剩餘工作只能收斂為三個正式階段並完成全部已盤點內容，不再建立子階段。歷史紀錄必須保留，但後續進度不得繼續以 P5.0-C2、D、E 等名稱切割或宣稱局部階段完成。
+**決策**：
+1. Phase 5「後端切換、安全與完整契約」：人工複核與全部正式寫入切換新核心；停止 legacy Quote／Approval command 與舊撤回寫入，舊 Model、狀態、資料表及 Migration 僅保留歷史唯讀。全域採 permission code、fail closed 與一致錯誤碼；補齊供應商、品項、價格、Purchase Request、RFQ、供應商報價、評選、得標、簽核、PO、收貨、驗收差異、庫存、採購建議及稽核 API，包含需求撤回／取消、搜尋、篩選與分頁；清除前後端舊資源命名及無使用者的 legacy service。完成門檻為正式寫入只走新核心、契約穩定，且安全、狀態機與 legacy 相容測試全部通過。
+2. Phase 6「企業採購操作介面」：一次完成所有主資料與採購生命週期頁面，採垂直導覽及角色權限，具備搜尋、篩選、分頁、詳情、空狀態與錯誤處理。完成門檻為各角色在瀏覽器實際走完需求、RFQ、報價、評選、得標、簽核、PO、收貨、驗收、差異、入庫及結案，不得只以 API 或自動測試驗收。
+3. Phase 7「整合、發布與 Demo 收尾」：完成 n8n 新核心正式流程、Gmail 通知、根目錄 Docker Compose 全服務一鍵啟動、可重建 Demo 種子資料、跨 Backend／Frontend／n8n／PostgreSQL／瀏覽器 E2E 與邊界情境、文件及 Demo 指南、安全與 Git 內容稽核。完成門檻為全新環境可一鍵啟動並完整 Demo，且測試、commit、push、部署與實測證據分開記錄。
+4. 既有 P5.0-A／B／C 紀錄保留為歷史實作與測試證據，納入新 Phase 5 的驗收基礎，但不代表 Phase 5 已完成。自本決策起只追蹤 Phase 5、Phase 6、Phase 7；每個階段須完成全部納入範圍後才能標記完成，不使用子階段或部分完成宣稱。
+**理由**：以三個具明確完成門檻的大階段分隔「後端與契約」、「完整操作介面」、「整合發布」，可直接判斷系統是否真正可用，並避免細碎編號掩蓋尚未接上的業務流程。
+**後果**：SPEC 與 PROGRESS 的現行 Roadmap 改為 Phase 5～7；舊進度列與 ADR 不刪除，只作歷史證據。原 Phase 5.0 的階段拆分決策標記為 superseded，其安全、切換與相容性要求全部延續至新 Phase 5。後續若任一階段尚有納入範圍未完成，只能標示該階段尚未完成。

@@ -366,6 +366,7 @@ def test_approval_case_queue_is_scoped_by_active_role(api_client, user, role_emp
 
     assert visible.status_code == 200
     assert [row["award_id"] for row in visible.data] == [award.id]
+    assert visible.data[0]["purpose"] == "C5-2 簽核測試"
     assert hidden.status_code == 200
     assert hidden.data == []
 

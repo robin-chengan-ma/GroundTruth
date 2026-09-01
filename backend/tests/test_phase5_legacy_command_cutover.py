@@ -82,3 +82,44 @@ def test_legacy_hallucination_verification_is_retired_without_mutation(
     assert quote.status == Quote.Status.PENDING_VERIFICATION
     assert not Approval.objects.exists()
     assert not ManualReviewQueue.objects.exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("action", "payload"),
+    [
+        ("claim", {}),
+        ("decide", {"decision": "approved"}),
+    ],
+)
+def test_legacy_approval_commands_are_retired_without_mutation(
+    action, payload, api_client, user, supplier, product, role_employee,
+):
+    quote = Quote.objects.create(
+        user=user,
+        supplier=supplier,
+        product=product,
+        quantity=5,
+        price=Decimal("1500.00"),
+        total_amount=Decimal("7500.00"),
+        currency="TWD",
+        status=Quote.Status.PENDING_APPROVAL,
+    )
+    approval = Approval.objects.create(
+        quote=quote,
+        role=role_employee,
+        approval_level=Approval.Level.SMALL,
+    )
+
+    response = api_client.post(
+        f"/api/v1/approvals/{approval.id}/{action}/",
+        payload,
+        format="json",
+        HTTP_AUTHORIZATION=bearer(user),
+    )
+
+    assert response.status_code == 410
+    assert response.data["code"] == "legacy_command_retired"
+    approval.refresh_from_db()
+    assert approval.status == Approval.Status.PENDING
+    assert approval.approver_id is None
