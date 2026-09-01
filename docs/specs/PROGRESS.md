@@ -107,6 +107,7 @@ updated: 2026-09-01
 | 2026-08-31 | 180a517 | P5.0-A2／A3：完善候選品項媒合與供應能力矩陣 | Codex／Robin |
 | 2026-09-01 | e2f8296 | P5.0-B1／B2：需求分頁與唯讀詳情彈窗 | Codex／Robin |
 | 2026-09-01 | 1023006 | P5.0-B3A：停用舊版詢價與 Quote 建單命令 | Codex／Robin |
+| 2026-09-01 | 28619e8 | 新版簽核工作台、legacy 簽核命令退役與 Phase 5～7 Roadmap 收斂 | Codex／Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
