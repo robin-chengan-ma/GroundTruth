@@ -13,8 +13,8 @@ updated: 2026-09-01
 
 | 呼叫方 | 端點範圍 | 認證方式 |
 | --- | --- | --- |
-| Vue 前端 | `/auth/*`、一般資源、`inquiries/trigger/`、簽核／複核 action | Access Token 放記憶體並以 `Authorization: Bearer <token>` 傳送；Refresh Token 僅存 HttpOnly、SameSite=Lax Cookie，refresh/logout 另驗證 `X-CSRFToken` |
-| n8n | suppliers/products 唯讀查詢、`quotes/calculate/`、`masking/mask/`、`masking/mask-amounts-only/`、`masking/unmask/`、`quotes/verify-hallucination/` | 固定 API Key，自訂 header `X-Internal-Api-Key`，需與 `INTERNAL_API_KEY` 環境變數一致（FR-1a） |
+| Vue 前端 | `/auth/*`、一般資源、`inquiries/parse/`、簽核／複核 action | Access Token 放記憶體並以 `Authorization: Bearer <token>` 傳送；Refresh Token 僅存 HttpOnly、SameSite=Lax Cookie，refresh/logout 另驗證 `X-CSRFToken` |
+| n8n | suppliers/products 唯讀查詢、`masking/mask/`、`masking/mask-amounts-only/`、`masking/unmask/` | 固定 API Key，自訂 header `X-Internal-Api-Key`，需與 `INTERNAL_API_KEY` 環境變數一致（FR-1a）；legacy `quotes/calculate/` 與 `quotes/verify-hallucination/` 已停用 |
 | Django（主動呼叫方） | n8n 的 `N8N_RESUME_WEBHOOK_URL`（`POST .../webhook/inquiry/resume`） | 固定 API Key，同上 header；由 Django 主動發起，不是被呼叫端，見 `docs/ADR/discuss/main-flow.md` |
 
 ## Vue 登入與 Session
@@ -631,66 +631,30 @@ FR-3：建立草稿前，依目前選擇的候選供應商、正式品項、數�
 
 ## POST /api/v1/inquiries/trigger/
 
-FR-1：接收自然語言詢價文字，同步呼叫 n8n Webhook（`N8N_INQUIRY_WEBHOOK_URL`），把 n8n 最終回應原樣回傳。
+Phase 5.0 起已停用的 legacy 詢價建單入口。路徑保留供舊呼叫者取得明確相容性錯誤，不再呼叫 n8n。
 
-詢價發起人固定取自 JWT 使用者，呼叫端傳入的 `user_id` 會被忽略，避免冒用其他人身分。
+**認證**：Bearer Access Token；缺漏或失效回 401。
 
-**Request**
+**Response（410）**
 ```json
-{ "raw_text": "幫我訂20個A產品，跟優品科技拿貨" }
-```
-
-`raw_text` 必須包含可由固定規則驗證的明確正整數數量，例如「20 個／20 件／數量：20／五個／
-十五件」；支援阿拉伯、全形與中文數字。模糊量詞如「一些／幾個」不得由 LLM 自行猜值，會在
-呼叫 n8n 前回 400。
-
-**Response（200）**：原樣透傳 n8n workflow 的最終輸出。
-
-**Response（400）**：`raw_text` 為空，或缺少明確正整數數量。
-
-**Response（401）**：Bearer Access Token 缺漏或失效。
-
-**Response（502）**：n8n 連線失敗、逾時或回傳非 2xx。
-```json
-{ "detail": "詢價流程觸發失敗，請稍後再試" }
+{
+  "detail": "舊版詢價建單流程已停用，請改用採購需求流程",
+  "code": "legacy_command_retired"
+}
 ```
 
 ## POST /api/v1/quotes/calculate/
 
-FR-4／FR-4a：固定程式邏輯試算報價金額，比對該供應商＋產品的歷史已核准均價，**並正式建立 `Quote` 資料列**（Phase 3 起：幻覺驗證 `quotes/verify-hallucination/` 需要一個真實存在的 `quote_id` 才能運作，Phase 2 當時只做試算，這裡補上建單）。只給 n8n 呼叫（需要 `X-Internal-Api-Key`），不開放給前端使用者。
+Phase 5.0 起已停用的 legacy Quote 建單入口。路徑與內部 API Key 認證保留，但通過認證後不再試算或建立 `Quote`。
 
 **Request Headers**
 ```
 X-Internal-Api-Key: <INTERNAL_API_KEY>
 ```
 
-**Request Body**
-```json
-{ "user_id": 1, "product_id": 1, "supplier_id": 1, "quantity": 20 }
-```
-`user_id`、`product_id`、`supplier_id`、`quantity` 皆為必填（`supplier_id` 在 Phase 2 曾經可省略，Phase 3 起因為要建立 Quote 而改為必填）。
-
-**Response（200）**
-```json
-{
-  "product_id": 1,
-  "supplier_id": 1,
-  "quantity": 20,
-  "unit_price": "1500.00",
-  "total_amount": "30000.00",
-  "currency": "TWD",
-  "price_deviation_pct": "2.39",
-  "price_deviation_flag": false,
-  "quote_id": 42
-}
-```
-`price_deviation_pct` 為 `null` 代表該供應商＋產品組合過去無已核准紀錄可比較（不視為異常）。
-`price_deviation_flag` 為 `true` 代表偏離超過門檻（20%，`services/quote_calculation_service.py` 寫死）。
-新建立的 `Quote` 狀態為 `pending_verification`。
-
-**Response（400）**：`user_id`／`product_id`／`supplier_id` 缺漏、`quantity` 非正整數、找不到指定使用者、或找不到指定產品。
-
 **Response（401）**：`X-Internal-Api-Key` 缺漏或錯誤。
+
+**Response（410）**：同 `inquiries/trigger/` 的 `legacy_command_retired` 回應；Request Body 不再解析。
 
 ## GET /api/v1/suppliers/?search=<name> 、 GET /api/v1/products/?search=<name>
 
@@ -775,33 +739,16 @@ FR-2a：n8n Unmask 節點呼叫，LLM 解析完成後立即用對照表還原真
 
 ## POST /api/v1/quotes/verify-hallucination/
 
-FR-6：比對 LLM 生成的報價摘要文字中的數字與名稱，是否忠實反映真實查詢值；不一致時寫入 `manual_review_queue`（`review_type=hallucination_mismatch`）並中止流程。真實數字／名稱一律從 `quote_id` 指向的 Quote 資料列本身讀取，不信任呼叫端傳入的數字——唯一信任呼叫端傳入的是 `summary_text`（LLM 生成內容，正是這支端點要驗證的對象）。只給 n8n 呼叫。
+Phase 5.0 起已停用的 legacy Quote 摘要驗證入口。路徑與內部 API Key 認證保留，但通過認證後不再修改 Quote、建立 Approval 或建立人工複核案件。
 
 **Request Headers**
 ```
 X-Internal-Api-Key: <INTERNAL_API_KEY>
 ```
 
-**Request Body**
-```json
-{ "quote_id": 42, "summary_text": "優品科技採購A產品，數量20，單價1500，總金額30000元" }
-```
-
-**Response（200，通過）**：`quotes.ai_summary_text` 寫入該摘要文字，`quotes.status` 進至 `pending_approval`，並建立一筆依金額門檻指派角色的 `approval`。
-```json
-{ "passed": true }
-```
-
-**Response（200，未通過）**：`quotes.status` 停在 `pending_review`，等待人工複核決議。
-```json
-{ "passed": false, "reasons": ["摘要文字缺少真實數字：unit_price"], "review_id": 15 }
-```
-
-**Response（400）**：`quote_id` 缺漏、或 `summary_text` 為空。
-
-**Response（404）**：找不到指定的 Quote。
-
 **Response（401）**：`X-Internal-Api-Key` 缺漏或錯誤。
+
+**Response（410）**：同 `inquiries/trigger/` 的 `legacy_command_retired` 回應；Request Body 不再解析。
 
 ## POST /api/v1/manual-review-queue/{id}/claim/
 

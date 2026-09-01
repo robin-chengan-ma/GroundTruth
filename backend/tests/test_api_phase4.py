@@ -1,5 +1,4 @@
 from decimal import Decimal
-from unittest.mock import patch
 
 import pytest
 from django.contrib.auth.hashers import check_password
@@ -14,21 +13,6 @@ from services.authentication_service import issue_token_pair
 def bearer(user):
     access, _, _ = issue_token_pair(user)
     return f"Bearer {access}"
-
-
-@pytest.mark.django_db
-@patch("api.procurement.views.trigger_inquiry")
-def test_inquiry_uses_jwt_user_not_spoofed_body_user(mock_trigger, api_client, user):
-    mock_trigger.return_value = {"status": "ok"}
-
-    response = api_client.post(
-        "/api/v1/inquiries/trigger/",
-        {"raw_text": "採購測試", "user_id": 99999},
-        HTTP_AUTHORIZATION=bearer(user),
-    )
-
-    assert response.status_code == 200
-    mock_trigger.assert_called_once_with("採購測試", user_id=user.id)
 
 
 @pytest.mark.django_db

@@ -57,3 +57,11 @@ updated: 2026-09-01
 **決策**：`/quotes/:id?page=...&page_size=...` 仍為詳情網址，但路由先呈現原採購清單，再於上層開啟唯讀詳情彈窗。彈窗右上角提供關閉圖示，亦可點背景遮罩或按 `Esc` 關閉；關閉後回到保留原分頁參數的清單網址。彈窗開啟時鎖定背景捲動，長內容只在彈窗內捲動。本人可視範圍、404 防線與唯讀 API 契約不變。
 **理由**：短暫查看單據時保留清單上下文更符合使用者操作習慣；保留詳情網址則兼顧重新整理、直接開啟與瀏覽器歷史。
 **後果**：取代 2026-08-31 決策中的「獨立唯讀頁／返回清單」互動描述，其餘伺服器分頁、權限與 API 決策維持有效；不修改後端、不新增 Migration、不修改 n8n。
+
+## 2026-09-01 [標籤：AI] P5.0-B3 legacy command 切換盤點
+**狀態**：accepted
+**背景**：P5.0-B1／B2 支援切片完成後，需依 Phase 5.0 正式決策停止 legacy inquiry／Quote／Approval command，但不得中斷目前仍使用舊 Approval API 的簽核頁面。
+**討論內容**：唯讀盤點確認 `POST /inquiries/trigger/`、`POST /quotes/calculate/` 與 `POST /quotes/verify-hallucination/` 仍可建立或推進 legacy Quote；`POST /quotes/{id}/withdraw/` 仍可修改舊 Quote；`POST /approvals/{id}/claim/` 與 `POST /approvals/{id}/decide/` 仍可修改 legacy Approval，且目前 Vue 簽核工作區仍呼叫後兩者。人工複核的幻覺案件決議也會修改 legacy Quote 並呼叫舊簽核路由，應由 P5.0-C 一併切換，不可只移除路由。
+**決策**：Robin 核准分段切換及 retired endpoint 契約。P5.0-B3A 先阻擋沒有新版前端呼叫者的 `POST /inquiries/trigger/`、`POST /quotes/calculate/` 與 `POST /quotes/verify-hallucination/`，通過原本 JWT 或內部 API Key 認證後統一回 `410 Gone`、錯誤碼 `legacy_command_retired`，且不得呼叫 n8n、建立或修改 Quote、建立 Approval 或人工複核案件。未通過認證仍回 401。後續將簽核頁與人工複核切到 Approval Case／Step，再封鎖其餘 legacy action；舊 Quote／Approval 的 GET 查詢保留唯讀歷史能力。
+**理由**：分段切換可先消除雙寫入口，又避免直接封鎖現行簽核工作區造成操作中斷。
+**後果**：P5.0-B3A 不修改資料庫或 n8n workflow；若舊 workflow 繼續呼叫上述 production endpoint，將收到明確 410 而不再產生 legacy 資料。P5.0-C 完成前，舊簽核與人工複核 action 暫時維持可用，避免中斷目前前端工作區。

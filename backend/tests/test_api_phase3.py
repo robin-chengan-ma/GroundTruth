@@ -76,60 +76,6 @@ def test_verify_hallucination_requires_internal_api_key(api_client, verify_quote
     assert resp.status_code == 401
 
 
-@pytest.mark.django_db
-def test_verify_hallucination_missing_quote_id(api_client, settings):
-    settings.INTERNAL_API_KEY = "test-internal-key"
-    resp = api_client.post(
-        "/api/v1/quotes/verify-hallucination/", {"summary_text": "x"},
-        HTTP_X_INTERNAL_API_KEY="test-internal-key",
-    )
-    assert resp.status_code == 400
-
-
-@pytest.mark.django_db
-def test_verify_hallucination_quote_not_found(api_client, settings):
-    settings.INTERNAL_API_KEY = "test-internal-key"
-    resp = api_client.post(
-        "/api/v1/quotes/verify-hallucination/", {"quote_id": 99999, "summary_text": "x"},
-        HTTP_X_INTERNAL_API_KEY="test-internal-key",
-    )
-    assert resp.status_code == 404
-
-
-@pytest.mark.django_db
-def test_verify_hallucination_passes_updates_quote(api_client, verify_quote, role_admin, settings):
-    settings.INTERNAL_API_KEY = "test-internal-key"
-    summary = f"{verify_quote.supplier.name}採購{verify_quote.product.name}，數量20，單價1500，總金額30000元"
-    resp = api_client.post(
-        "/api/v1/quotes/verify-hallucination/",
-        {"quote_id": verify_quote.id, "summary_text": summary},
-        HTTP_X_INTERNAL_API_KEY="test-internal-key",
-    )
-    assert resp.status_code == 200
-    assert resp.data == {"passed": True}
-
-    verify_quote.refresh_from_db()
-    assert verify_quote.status == Quote.Status.PENDING_APPROVAL
-    assert verify_quote.ai_summary_text == summary
-
-
-@pytest.mark.django_db
-def test_verify_hallucination_fails_creates_review(api_client, verify_quote, settings):
-    settings.INTERNAL_API_KEY = "test-internal-key"
-    summary = f"{verify_quote.supplier.name}採購{verify_quote.product.name}，數量20，總金額30000元"  # 少單價
-    resp = api_client.post(
-        "/api/v1/quotes/verify-hallucination/",
-        {"quote_id": verify_quote.id, "summary_text": summary},
-        HTTP_X_INTERNAL_API_KEY="test-internal-key",
-    )
-    assert resp.status_code == 200
-    assert resp.data["passed"] is False
-    assert "review_id" in resp.data
-
-    verify_quote.refresh_from_db()
-    assert verify_quote.status == Quote.Status.PENDING_REVIEW
-
-
 # ---- manual-review-queue claim/decide ----
 
 @pytest.fixture
