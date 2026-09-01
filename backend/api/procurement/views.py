@@ -1,3 +1,4 @@
+from django.core.paginator import EmptyPage, Paginator
 from django.db.models import Q
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
@@ -10,6 +11,7 @@ from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.procurement import ApprovalRepository, QuoteRepository
 from schemas.procurement import (
     ApprovalSerializer,
+    PurchaseRequestDetailSerializer,
     PurchaseRequestDraftSerializer,
     PurchaseRequestListSerializer,
     QuoteRequirementResultSerializer,
@@ -73,6 +75,7 @@ from services.purchase_request_draft_service import (
     create_draft,
     delete_draft,
     get_owned_draft,
+    get_owned_request,
     list_owned_drafts,
     list_owned_requests,
     preview_draft,
@@ -394,7 +397,25 @@ class PurchaseRequestViewSet(viewsets.ViewSet):
     authentication_classes = [BusinessJwtAuthentication]
     permission_classes = [permissions.IsAuthenticated]
 
+    page_sizes = {10, 20, 50}
+
+    @staticmethod
+    def _pagination_error(detail):
+        return Response(
+            {"detail": detail, "code": "invalid_pagination"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     def list(self, request):
+        try:
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 20))
+        except (TypeError, ValueError):
+            return self._pagination_error("page 與 page_size 必須是整數")
+        if page < 1:
+            return self._pagination_error("page 必須大於 0")
+        if page_size not in self.page_sizes:
+            return self._pagination_error("page_size 只允許 10、20 或 50")
         try:
             requests = list_owned_requests(request.user)
         except DraftError as exc:
@@ -402,7 +423,33 @@ class PurchaseRequestViewSet(viewsets.ViewSet):
                 {"detail": str(exc), "code": exc.code},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        return Response(PurchaseRequestListSerializer(requests, many=True).data)
+        paginator = Paginator(requests, page_size)
+        try:
+            page_data = paginator.page(page)
+        except EmptyPage:
+            return self._pagination_error("page 超出有效範圍")
+        return Response({
+            "count": paginator.count,
+            "page": page_data.number,
+            "page_size": page_size,
+            "total_pages": max(1, paginator.num_pages),
+            "results": PurchaseRequestListSerializer(page_data.object_list, many=True).data,
+        })
+
+    def retrieve(self, request, pk=None):
+        try:
+            purchase_request = get_owned_request(request.user, pk)
+        except DraftNotFound:
+            return Response(
+                {"detail": "找不到指定的採購需求", "code": "not_found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except DraftError as exc:
+            return Response(
+                {"detail": str(exc), "code": exc.code},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return Response(PurchaseRequestDetailSerializer(purchase_request).data)
 
 
 class QuoteViewSet(viewsets.ReadOnlyModelViewSet):

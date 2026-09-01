@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-31
+updated: 2026-09-01
 ---
 
 # 開發進度
@@ -74,6 +74,7 @@ updated: 2026-08-31
 | 2026-08-31 | Phase 5.0／FR-1a／FR-2／FR-6a／FR-16～FR-19／NFR-1 | 應用切換與安全收斂 | Codex／Robin | P5.0-A 完成並通過 Robin 真實 n8n／Vue 驗收；P5.0-B～E 尚未開發 | 新版候選解析改為 Django 先遮罩多間已知供應商與金額、n8n 回傳後於單次請求遞迴還原；未知、混合已知／未知及模糊供應商不得把原始名稱送至 n8n。TDD RED 4 failed；GREEN 目標 44 passed、遮罩 Service coverage 100%、候選解析 Service 87%、兩者合計 94%；完整 Backend 344 passed，Ruff、Django check、Migration check、`git diff --check` 通過；不新增 Migration。Robin 從 Vue 輸入兩間供應商、兩品項與預算，確認 LLM Input 僅含 `SUP_001`／`SUP_002`／`AMOUNT_001`，LLM Output 保留供應商 Token，Django 正確還原兩間候選供應商。P5.0-B～E 依 `docs/ADR/discuss/phase5.md` 繼續執行 |
 | 2026-08-31 | P5.0-A2／FR-3 | 未匹配品項提示、刪除確認與最後一項重設 | Codex／Robin | 完成；功能、資訊層級與必填紅框均通過 Robin 瀏覽器驗收 | 每項顯示 AI 辨識摘要；未匹配正式品項時顯示警告與試算停用原因。移除任何品項均先確認，移除後清除試算；最後一項移除時同步刪除已存後端草稿並回到自然語言輸入畫面。依實測畫面將匹配狀態、辨識摘要、單筆警告與按鈕停用原因分層，並依後端規則將缺少的候選供應商、正式品項與正數數量以紅框及文字說明標示；Robin 已確認最終畫面正常。TDD RED 先後 3 failed、1 failed；GREEN 目標 7 passed；完整 Frontend 19 passed，type-check、ESLint、production build 通過；不修改 n8n、不新增 Migration |
 | 2026-08-31 | P5.0-A3／FR-3 | 原句正式品項安全補回與供應能力矩陣 | Codex／Robin | 完成；通過 Robin 真實 n8n／瀏覽器驗收 | 修復 LLM 將 `A產品-辦公椅` 簡化為 `辦公椅` 後無法媒合：只有原句明確包含生效正式品名且候選唯一時才補回，歧義情境維持未匹配。新增受 `purchase_request.create` 控制的供應能力查詢，Vue 逐品項顯示候選供應商的有效價格、無價格、未建關係、停用、品質禁止或條件式合格狀態，選項變更時重新查詢；矩陣僅供確認、不阻擋草稿。TDD RED：品項 1 failed、矩陣 API 2 failed；GREEN 目標 Backend 26 passed、Frontend 8 passed；完整 Backend 349 passed、Frontend 20 passed，Ruff、Django check、Migration check、type-check、ESLint、production build 通過；Robin 已以指定自然語言完成實測；不修改 n8n、不新增 Migration |
+| 2026-09-01 | P5.0-B1／B2／FR-9b | 本人需求伺服器分頁與唯讀詳情彈窗 | Codex／Robin | 程式與自動測試完成；待 Robin 瀏覽器驗收 | 本人清單支援每頁 10／20／50 筆、預設 20 筆，頁碼與每頁筆數保存在 URL；申請編號以保留清單背景的彈窗顯示本人需求、候選供應商與完整品項快照，支援凸出右上角的紅底白色關閉圖示、背景遮罩及 `Esc` 關閉，長內容只捲動彈窗；詳情網址可重新整理，非本人與不存在資源統一 404。開發前依 Robin 確認清空本機採購交易測試資料並重設流水號，保留 7 個帳號、8 個角色、5 間供應商、6 個品項、6 筆庫存及 3 筆簽核政策；資料庫內容未提交 Git。TDD RED：Backend 3 個功能失敗、Frontend 2 個清單失敗、1 個詳情缺檔及 1 個彈窗行為失敗；GREEN 目標 Backend 4 passed、Frontend 4 passed；完整 Backend 352 passed、Frontend 23 passed，Ruff、Django check、Migration check、type-check、ESLint、production build、`git diff --check` 通過；不新增 Migration、不修改 n8n |
 
 ## 已知待補（非本次 Phase 範圍，記錄避免遺漏）
 
@@ -100,6 +101,7 @@ updated: 2026-08-31
 | 2026-08-28 | cc39aba | fix：完善詢價防呆與企業採購規格 | Robin |
 | 2026-08-31 | fc0d9e9 | Phase 4.1：企業採購閉環、自然語言需求確認與本人採購需求清單 | Codex／Robin |
 | 2026-08-31 | 80362dd | P5.0-A：修復新版需求解析敏感資料遮罩 | Codex／Robin |
+| 2026-08-31 | 180a517 | P5.0-A2／A3：完善候選品項媒合與供應能力矩陣 | Codex／Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
@@ -110,3 +112,4 @@ updated: 2026-08-31
 | 2026-08-28 | ec5d0d5 | Robin 已推版（包含 `cc39aba`） | 尚未部署 |
 | 2026-08-31 | 9689540 | Robin 已推版（`origin/main`，包含 `fc0d9e9`） | 尚未部署 |
 | 2026-08-31 | 80362dd | 尚未 push | 尚未部署 |
+| 2026-08-31 | 180a517 | 尚未 push | 尚未部署 |

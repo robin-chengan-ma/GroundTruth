@@ -107,6 +107,36 @@ export interface PurchaseRequestSummary {
   created_at: string
   updated_at: string
 }
+export interface PaginatedPurchaseRequests {
+  count: number
+  page: number
+  page_size: 10 | 20 | 50
+  total_pages: number
+  results: PurchaseRequestSummary[]
+}
+export interface PurchaseRequestDetail {
+  id: number
+  request_no: string
+  purpose: string
+  needed_by: string | null
+  requester_name: string
+  status: string
+  currency: string
+  source: string
+  candidate_suppliers: Array<{ supplier_id: number; supplier_name: string }>
+  items: Array<{
+    id: number
+    line_no: number
+    product_id: number | null
+    product_name: string | null
+    description_snapshot: string
+    specifications: Record<string, unknown>
+    quantity: string
+    unit_of_measure: string
+  }>
+  created_at: string
+  updated_at: string
+}
 export interface EstimateItem {
   product_id: number
   product_name: string

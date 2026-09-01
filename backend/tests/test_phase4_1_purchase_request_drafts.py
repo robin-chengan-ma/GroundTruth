@@ -7,7 +7,15 @@ from django.utils import timezone
 from apps.core.models import Permission, RolePermission, UserRole
 from apps.crm.models import Supplier
 from apps.erp.models import Product
-from apps.procurement.models import PurchaseRequest, Quote, Rfq, SupplierPriceVersion, SupplierProduct
+from apps.procurement.models import (
+    PurchaseRequest,
+    PurchaseRequestItem,
+    Quote,
+    Rfq,
+    RfqSupplier,
+    SupplierPriceVersion,
+    SupplierProduct,
+)
 
 
 def _grant_draft_permissions(user, role):
@@ -249,13 +257,88 @@ def test_list_owned_purchase_requests_includes_submitted_and_orders_newest_first
         status=PurchaseRequest.Status.SUBMITTED,
     )
 
-    response = api_client.get("/api/v1/purchase-requests/")
+    response = api_client.get("/api/v1/purchase-requests/?page=1&page_size=10")
 
     assert response.status_code == 200
-    assert [row["id"] for row in response.data] == [newer.id, older.id]
-    assert response.data[0]["request_no"] == "PR-NEWER"
-    assert response.data[0]["requester_name"] == user.name
-    assert "created_at" in response.data[0]
+    assert response.data["count"] == 2
+    assert response.data["page"] == 1
+    assert response.data["page_size"] == 10
+    assert response.data["total_pages"] == 1
+    assert [row["id"] for row in response.data["results"]] == [newer.id, older.id]
+    assert response.data["results"][0]["request_no"] == "PR-NEWER"
+    assert response.data["results"][0]["requester_name"] == user.name
+    assert "created_at" in response.data["results"][0]
+
+
+@pytest.mark.django_db
+def test_purchase_request_list_validates_page_size(api_client, user, role_employee):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+
+    response = api_client.get("/api/v1/purchase-requests/?page_size=25")
+
+    assert response.status_code == 400
+    assert response.data["code"] == "invalid_pagination"
+
+
+@pytest.mark.django_db
+def test_purchase_request_detail_is_read_only_and_returns_snapshot(
+    api_client, user, role_employee, product, supplier,
+):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+    purchase_request = PurchaseRequest.objects.create(
+        request_no="PR-DETAIL", requester=user, purpose="辦公設備汰換",
+        needed_by="2026-09-30", status=PurchaseRequest.Status.SUBMITTED,
+    )
+    PurchaseRequestItem.objects.create(
+        request=purchase_request,
+        line_no=1,
+        product=product,
+        description_snapshot=product.name,
+        specification_snapshot={"material": "網布", "feature": "有頭枕"},
+        quantity="5",
+        unit_of_measure="EA",
+    )
+    rfq = Rfq.objects.create(rfq_no="RFQ-DETAIL", request=purchase_request)
+    RfqSupplier.objects.create(rfq=rfq, supplier=supplier, invited_at=timezone.now())
+
+    response = api_client.get(f"/api/v1/purchase-requests/{purchase_request.id}/")
+    write_response = api_client.patch(
+        f"/api/v1/purchase-requests/{purchase_request.id}/",
+        {"purpose": "不得修改"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["request_no"] == "PR-DETAIL"
+    assert response.data["requester_name"] == user.name
+    assert response.data["candidate_suppliers"] == [
+        {"supplier_id": supplier.id, "supplier_name": supplier.name},
+    ]
+    assert response.data["items"][0]["specifications"] == {
+        "material": "網布",
+        "feature": "有頭枕",
+    }
+    assert write_response.status_code == 405
+
+
+@pytest.mark.django_db
+def test_purchase_request_detail_hides_other_users_document(
+    api_client, user, role_employee,
+):
+    _grant_draft_permissions(user, role_employee)
+    other_user = type(user).objects.create(
+        name="Other User", email="other-detail@groundtruth.demo", password="hashed", role=role_employee,
+    )
+    other_request = PurchaseRequest.objects.create(
+        request_no="PR-OTHER-DETAIL", requester=other_user, purpose="別人的需求",
+    )
+    api_client.force_authenticate(user=user)
+
+    response = api_client.get(f"/api/v1/purchase-requests/{other_request.id}/")
+
+    assert response.status_code == 404
 
 
 @pytest.mark.django_db

@@ -120,6 +120,39 @@ class PurchaseRequestListSerializer(serializers.ModelSerializer):
         return names[0] if len(names) == 1 else f"{names[0]}等 {len(names)} 間"
 
 
+class PurchaseRequestDetailSerializer(serializers.ModelSerializer):
+    requester_name = serializers.CharField(source="requester.name", read_only=True)
+    items = PurchaseRequestItemSerializer(many=True, read_only=True)
+    candidate_suppliers = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PurchaseRequest
+        fields = [
+            "id",
+            "request_no",
+            "status",
+            "purpose",
+            "needed_by",
+            "currency",
+            "source",
+            "requester_name",
+            "items",
+            "candidate_suppliers",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_candidate_suppliers(self, obj):
+        suppliers = {}
+        for rfq in obj.rfqs.all():
+            for invitation in rfq.invited_suppliers.all():
+                suppliers[invitation.supplier_id] = invitation.supplier.name
+        return [
+            {"supplier_id": supplier_id, "supplier_name": name}
+            for supplier_id, name in suppliers.items()
+        ]
+
+
 class RfqSerializer(serializers.ModelSerializer):
     request_id = serializers.IntegerField(source="request.id", read_only=True)
     supplier_ids = serializers.SerializerMethodField()

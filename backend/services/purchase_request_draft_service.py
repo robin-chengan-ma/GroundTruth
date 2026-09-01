@@ -236,6 +236,14 @@ def list_owned_requests(user):
     return PurchaseRequestRepository.owned(user.id)
 
 
+def get_owned_request(user, pk):
+    _require_permission(user, "purchase_request.read_own")
+    try:
+        return PurchaseRequestRepository.owned(user.id).get(pk=pk)
+    except ObjectDoesNotExist as exc:
+        raise DraftNotFound("找不到指定的採購需求") from exc
+
+
 @transaction.atomic
 def delete_draft(user, pk):
     _require_permission(user, "purchase_request.edit_draft")

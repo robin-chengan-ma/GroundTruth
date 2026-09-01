@@ -26,6 +26,12 @@ const router = createRouter({
       meta: { permissions: ['purchase_request.read_own'] },
     },
     {
+      path: '/quotes/:id',
+      name: 'purchase-request-detail',
+      component: QuoteListView,
+      meta: { permissions: ['purchase_request.read_own'] },
+    },
+    {
       path: '/approvals',
       name: 'approvals',
       component: ApprovalView,

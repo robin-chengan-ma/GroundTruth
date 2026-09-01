@@ -1,6 +1,6 @@
 ---
 title: API Reference
-updated: 2026-08-31
+updated: 2026-09-01
 ---
 
 # API Reference
@@ -99,26 +99,75 @@ Quote、Supplier Quote、簽核或採購單。
 
 **認證／權限**：Bearer Access Token；需 `purchase_request.read_own`。只回傳 JWT 使用者本人建立的 Purchase Request，依 `created_at`、`id` 新到舊排序；不混入 legacy Quote。
 
-**Request**：無。
+**Query Parameters**：
+
+| 名稱 | 必填 | 規則 |
+| --- | --- | --- |
+| `page` | 否 | 正整數，預設 `1` |
+| `page_size` | 否 | 只允許 `10`、`20`、`50`，預設 `20` |
 
 **Response（200，假資料）**：
 
 ```json
-[
-  {
-    "id": 1201,
-    "request_no": "PR-EXAMPLE-001",
-    "purpose": "辦公設備汰換",
-    "item_summary": "辦公椅、升降桌",
-    "supplier_summary": "範例科技、示例物產",
-    "requester_name": "範例使用者",
-    "created_at": "2026-08-31T08:00:00+08:00",
-    "status": "submitted"
-  }
-]
+{
+  "count": 21,
+  "page": 2,
+  "page_size": 10,
+  "total_pages": 3,
+  "results": [
+    {
+      "id": 1201,
+      "request_no": "PR-EXAMPLE-001",
+      "purpose": "辦公設備汰換",
+      "item_summary": "辦公椅、升降桌",
+      "supplier_summary": "範例科技、示例物產",
+      "requester_name": "範例使用者",
+      "created_at": "2026-08-31T08:00:00+08:00",
+      "status": "submitted"
+    }
+  ]
+}
 ```
 
-沒有權限回 403；Token 缺漏或失效回 401。此端點目前只提供本人清單，不接受 POST／PATCH／DELETE。
+`page` 或 `page_size` 格式／範圍不合法回 400 `invalid_pagination`；沒有權限回 403；Token 缺漏或失效回 401。此端點只提供本人清單，不接受 POST。
+
+### GET `/api/v1/purchase-requests/{id}/`
+
+**認證／權限**：Bearer Access Token；需 `purchase_request.read_own`。只允許查看本人建立的 Purchase Request；非本人與不存在資源統一回 404。
+
+**Response（200，假資料）**：
+
+```json
+{
+  "id": 1201,
+  "request_no": "PR-EXAMPLE-001",
+  "status": "submitted",
+  "purpose": "辦公設備汰換",
+  "needed_by": "2026-09-30",
+  "currency": "TWD",
+  "source": "manual",
+  "requester_name": "範例使用者",
+  "candidate_suppliers": [
+    {"supplier_id": 101, "supplier_name": "範例科技"}
+  ],
+  "items": [
+    {
+      "id": 1301,
+      "line_no": 1,
+      "product_id": 201,
+      "product_name": "辦公椅",
+      "description_snapshot": "網布辦公椅",
+      "specifications": {"material": "網布"},
+      "quantity": "5.000",
+      "unit_of_measure": "EA"
+    }
+  ],
+  "created_at": "2026-08-31T08:00:00+08:00",
+  "updated_at": "2026-08-31T08:05:00+08:00"
+}
+```
+
+詳情包含需求欄位、候選供應商與完整品項快照，僅供唯讀追溯；PATCH／PUT／DELETE 回 405。
 
 ## 採購建議 API
 
