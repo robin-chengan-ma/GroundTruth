@@ -123,6 +123,7 @@ updated: 2026-09-02
 | 2026-09-01 | 28619e8 | 新版簽核工作台、legacy 簽核命令退役與 Phase 5～7 Roadmap 收斂 | Codex／Robin |
 | 2026-09-02 | f506d07 | Phase 5：查詢契約補齊（FR-16）、purchase_suggestion.read 權限收斂、5 個 legacy 服務移除、前端 /quotes 更名為 /purchase-requests | Robin |
 | 2026-09-02 | 5cf0533 | Phase 6：企業採購操作介面、流程健康總覽與 AI 候選稽核修正 | Claude／Codex／Robin |
+| 2026-09-02 | 3c81036 | fix(phase6)：補齊 10 個清單頁搜尋／篩選／分頁（承接 `5cf0533`／`fddf57f` 之後的缺口），並修正審查發現的 `?category=` 500、品項分類超過 50 筆漏資料、測試文件用詞不準確 3 項缺口，ADR 範圍決策紀錄同步更正 | Claude／Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
