@@ -206,7 +206,8 @@ def test_purchase_suggestion_list_and_retrieve_visible_with_permission(
 def test_purchase_suggestion_convert_and_dismiss_not_gated_by_read_permission(
     api_client, user, role_employee, admin_user, supplier, product,
 ):
-    """convert／dismiss 各自的授權已由 service 層把關（purchase_request.create／admin 身分），
+    """convert／dismiss 各自的授權已由 service 層把關（purchase_request.create／
+    purchase_suggestion.dismiss 權限碼，見 tests/test_phase5_legacy_permission_codes.py），
     不應該因為缺少 purchase_suggestion.read 而在 DRF 權限層被擋下——兩者是不同的能力。"""
     from apps.erp.models import PurchaseSuggestion
 

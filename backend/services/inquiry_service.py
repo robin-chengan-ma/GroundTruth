@@ -9,7 +9,12 @@ from django.conf import settings
 from apps.crm.models import Supplier
 from apps.erp.models import Product
 from repositories.inquiry import request_candidate_parse
-from services.masking_service import mask_candidate_text, unmask_payload
+from services.masking_service import (
+    MaskingError,
+    mask_candidate_text,
+    mask_confirmed_supplier_text,
+    unmask_payload,
+)
 
 INQUIRY_TIMEOUT_SECONDS = 30
 
@@ -20,6 +25,13 @@ class InquiryTriggerError(Exception):
 
 class InquiryValidationError(InquiryTriggerError):
     """使用者輸入缺少可驗證的必要欄位。"""
+
+
+class InquiryUnmaskableSupplierError(InquiryValidationError):
+    """FR-6a 續傳流程專用（2026-09-02 新增）：`mask_confirmed_supplier_text` 找不到可定位的
+    供應商片段時拋出，讓呼叫端（`services/inquiry_resume_service.trigger_resume`）能與其他
+    一般輸入驗證錯誤區分開，對應到獨立的 `resume_error_code`（不落地任何原始例外訊息或
+    供應商名稱）。"""
 
 
 FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
@@ -158,17 +170,79 @@ def parse_purchase_request_candidate(raw_text: str, *, user_id: int) -> dict:
     if masking_result["outcome"] == "supplier_not_found":
         raise InquiryValidationError("找不到可確認的供應商，請檢查名稱後再試")
 
+    parsed = _request_and_unmask_candidate(masking_result["masked_text"], masking_result["mapping"], user_id=user_id)
+
+    supplier_rows = _candidate_list(parsed, "suppliers")
+    item_rows = _candidate_list(parsed, "items")
+    suppliers, supplier_missing_fields = _resolve_supplier_candidates(supplier_rows)
+    items, item_missing_fields = _resolve_item_candidates(item_rows, raw_text)
+    missing_fields = supplier_missing_fields + item_missing_fields
+
+    return {
+        "purpose": str(parsed.get("purpose") or raw_text).strip(),
+        "needed_by": parsed.get("needed_by") or None,
+        "currency": str(parsed.get("currency") or "TWD").upper(),
+        "assistant_message": str(parsed.get("assistant_message") or "請確認 AI 整理的需求內容。"),
+        "supplier_candidates": suppliers,
+        "items": items,
+        "missing_fields": missing_fields,
+        "ready_for_draft": not missing_fields,
+    }
+
+
+def resolve_candidate_after_manual_review(raw_text: str, *, supplier: Supplier, requester_id: int) -> dict:
+    """FR-6a 人工複核核准 supplier_fuzzy_match 案件後續傳流程（2026-09-02 改版，
+    見 docs/ADR/debug/phase5-security.md）：Django 直接呼叫，不再交還 n8n 續傳 webhook
+    （該路徑會呼叫已於 Phase 5 退場的 legacy `/quotes/calculate/`／`/quotes/verify-hallucination/`
+    端點，核准後其實無法真的解析出候選）。
+
+    供應商已由人工確認，不再重新跑模糊比對（避免又繞回複核佇列造成無限迴圈），改用
+    `mask_confirmed_supplier_text` 鎖定已知供應商全名遮罩；品項解析仍呼叫既有的候選
+    解析 n8n webhook（與 `parse_purchase_request_candidate` 共用同一個 v2 pure-parse
+    端點），品項/數量回填邏輯也與其共用（見 `_resolve_item_candidates`）。
+
+    只回傳候選資料，不建立單據——是否自動建立草稿由呼叫端
+    （`services/inquiry_resume_service.trigger_resume`）依 `ready_for_draft` 決定。
+    """
+    if not raw_text or not raw_text.strip():
+        raise InquiryValidationError("採購需求不可為空")
+
     try:
-        parsed = request_candidate_parse(masking_result["masked_text"], user_id=user_id)
+        masking_result = mask_confirmed_supplier_text(raw_text.strip(), supplier)
+    except MaskingError as exc:
+        # 找不到可定位的供應商片段：fail-closed，不把真實供應商名稱送給外部 LLM，
+        # 轉成呼叫端（inquiry_resume_service.trigger_resume）已知會攔截的專屬例外型別，
+        # 對應到獨立的 resume_error_code（2026-09-02 起，見 InquiryUnmaskableSupplierError）。
+        raise InquiryUnmaskableSupplierError(str(exc)) from exc
+    parsed = _request_and_unmask_candidate(
+        masking_result["masked_text"], masking_result["mapping"], user_id=requester_id,
+    )
+
+    item_rows = _candidate_list(parsed, "items")
+    items, missing_fields = _resolve_item_candidates(item_rows, raw_text)
+
+    return {
+        "purpose": str(parsed.get("purpose") or raw_text).strip(),
+        "needed_by": parsed.get("needed_by") or None,
+        "currency": str(parsed.get("currency") or "TWD").upper(),
+        "supplier_id": supplier.id,
+        "items": items,
+        "missing_fields": missing_fields,
+        "ready_for_draft": not missing_fields,
+    }
+
+
+def _request_and_unmask_candidate(masked_text: str, mapping: dict, *, user_id: int) -> dict:
+    try:
+        parsed = request_candidate_parse(masked_text, user_id=user_id)
     except (requests.RequestException, requests.JSONDecodeError) as exc:
         raise InquiryTriggerError("AI 需求解析失敗，請稍後再試") from exc
     if not isinstance(parsed, dict):
         raise InquiryTriggerError("AI 候選資料格式錯誤，請重新解析")
-    parsed = unmask_payload(parsed, masking_result["mapping"])
+    return unmask_payload(parsed, mapping)
 
-    supplier_rows = _candidate_list(parsed, "suppliers")
-    item_rows = _candidate_list(parsed, "items")
-    explicit_products = _explicit_product_candidates(raw_text)
+
+def _resolve_supplier_candidates(supplier_rows: list) -> tuple:
     missing_fields = []
     suppliers = []
     for index, row in enumerate(supplier_rows):
@@ -182,7 +256,12 @@ def parse_purchase_request_candidate(raw_text: str, *, user_id: int) -> dict:
         })
     if not suppliers:
         missing_fields.append("supplier_candidates")
+    return suppliers, missing_fields
 
+
+def _resolve_item_candidates(item_rows: list, raw_text: str) -> tuple:
+    explicit_products = _explicit_product_candidates(raw_text)
+    missing_fields = []
     items = []
     for index, row in enumerate(item_rows):
         product_name = str(row.get("product_name") or row.get("name") or "").strip()
@@ -206,14 +285,4 @@ def parse_purchase_request_candidate(raw_text: str, *, user_id: int) -> dict:
         })
     if not items:
         missing_fields.append("items")
-
-    return {
-        "purpose": str(parsed.get("purpose") or raw_text).strip(),
-        "needed_by": parsed.get("needed_by") or None,
-        "currency": str(parsed.get("currency") or "TWD").upper(),
-        "assistant_message": str(parsed.get("assistant_message") or "請確認 AI 整理的需求內容。"),
-        "supplier_candidates": suppliers,
-        "items": items,
-        "missing_fields": missing_fields,
-        "ready_for_draft": not missing_fields,
-    }
+    return items, missing_fields

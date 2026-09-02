@@ -114,6 +114,8 @@ N8N_INQUIRY_WEBHOOK_URL = os.environ.get("N8N_INQUIRY_WEBHOOK_URL", "http://loca
 N8N_INQUIRY_PARSE_WEBHOOK_URL = os.environ.get(
     "N8N_INQUIRY_PARSE_WEBHOOK_URL", "http://localhost:5678/webhook/purchase-request-candidate",
 )
-# FR-6a：供應商模糊比對案件核准後，Django 主動呼叫這支 n8n webhook，交還流程重新走
-# 遮罩→LLM 解析（見 services/inquiry_resume_service.py、n8n/workflows/inquiry-flow.json 的續傳分支）。
+# 2026-09-02 起已無程式碼呼叫：FR-6a 供應商模糊比對案件核准後的續傳流程改為 Django
+# 直接重新解析（見 services/inquiry_resume_service.py），不再呼叫這支 n8n webhook；
+# n8n/workflows/inquiry-flow.json 的「Webhook 續傳詢價」分支同步成為死分支。保留此設定
+# 與其預設值，避免尚未更新 .env 的環境啟動失敗；決策見 docs/ADR/discuss/main-flow.md。
 N8N_RESUME_WEBHOOK_URL = os.environ.get("N8N_RESUME_WEBHOOK_URL", "http://localhost:5678/webhook/inquiry/resume")

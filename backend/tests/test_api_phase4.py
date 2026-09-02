@@ -29,6 +29,13 @@ def test_employee_quote_list_only_contains_own_quotes(api_client, user, supplier
     Quote.objects.create(
         user=other_user, supplier=supplier, product=product, quantity=1, price=20, total_amount=20, currency="TWD"
     )
+    # Phase 5：legacy Quote 查詢改用 permission code 授權（見 docs/ADR/debug/phase5-security.md），
+    # 不再靠 role.role == "employee" 隱式推斷可視範圍，需明確授予 purchase_request.read_own。
+    UserRole.objects.get_or_create(user=user, role=role_employee)
+    permission, _ = Permission.objects.get_or_create(
+        code="purchase_request.read_own", defaults={"name": "讀取自己的採購需求"}
+    )
+    RolePermission.objects.get_or_create(role=role_employee, permission=permission)
 
     response = api_client.get("/api/v1/quotes/", HTTP_AUTHORIZATION=bearer(user))
 

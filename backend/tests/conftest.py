@@ -41,6 +41,7 @@ def admin_user(db, role_admin):
         "manual_review.decide",
         "audit.read",
         "purchase_suggestion.read",
+        "purchase_suggestion.dismiss",
     ):
         permission = Permission.objects.create(code=code, name=code)
         RolePermission.objects.create(role=role_admin, permission=permission)

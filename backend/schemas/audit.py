@@ -11,6 +11,7 @@ class ManualReviewQueueSerializer(serializers.ModelSerializer):
         fields = [
             "id", "quote", "review_type", "ai_generated_text", "expected_value",
             "supplier", "raw_input_text", "requester", "status", "user", "decision",
+            "resume_status", "resume_error_code", "created_purchase_request",
             "created_at", "updated_at", "supplier_name", "claimant_name",
         ]
 

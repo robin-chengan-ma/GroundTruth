@@ -178,7 +178,7 @@
 
 ## 2026-08-27 [標籤：使用者] 供應商模糊比對案件核准後，交還 n8n 流程的通知機制
 
-**狀態**：accepted
+**狀態**：superseded（由 2026-09-02「Django 直接接管續傳編排，略過 n8n 續傳 webhook」取代，見下方條目）
 
 **背景**：`supplier_fuzzy_match` 案件經人工在 `manual-review-queue/{id}/decide/` 核准（確認供應商身分）後，需要重新走一次「遮罩金額→LLM 解析品項/數量→查詢供應商/產品→試算→摘要→幻覺驗證」，才能真正產出報價。這段串接原本開工時被誤歸類為「非本次 Phase 範圍」寫進 PROGRESS.md 已知待補，但重讀 SPEC.md 後確認 FR-6a 明確要求「確認為系統疑似比對到的供應商...重新走正常遮罩→LLM解析流程」，屬於 Phase 3 範圍內、只是這次開發本身漏做，因此補上設計與實作。核心問題：Django 核准決議完成後，n8n 要怎麼知道「這個案件已核准、可以繼續」？
 
@@ -302,3 +302,54 @@
 **後果**：預期需要重構採購領域資料模型、API、Service、n8n 結構化解析、Vue 導覽與頁面、角色權限、
 稽核事件及測試；任何 migration 前必須另行提出 SQL、資料轉換、索引／鎖表風險與回滾方案並取得使用者核准。
 Phase 4.1 的詳細 ERD、狀態機、RBAC、遷移與測試設計見 `docs/ADR/discuss/phase4-1-architecture.md`。
+
+## 2026-09-02 [標籤：使用者] 修正：供應商模糊比對案件核准後的續傳機制改為 Django 直接接管，略過 n8n 續傳 webhook
+
+**狀態**：accepted（取代上方 2026-08-27「供應商模糊比對案件核准後，交還 n8n 流程的通知機制」條目）
+
+**背景**：Codex 對已標記「Phase 5 正式完成」的程式碼重新審查，發現上方 2026-08-27 決策實際執行時已經失效：`N8N_RESUME_WEBHOOK_URL` 指向的 n8n「Webhook 續傳詢價」子流程，內部節點呼叫的是 Phase 5.0 已停用、固定回 410 的 legacy `/quotes/calculate/`／`/quotes/verify-hallucination/`，核准後續傳實際上從未真正完成過（詳細排查過程見 `docs/ADR/debug/phase5-security.md` 2026-09-02 條目）。需要重新決定「人工複核核准 supplier_fuzzy_match 案件後，要怎麼把候選解析出來並讓使用者看到結果」。
+
+**討論內容**：兩個方案——(a) 補一個新的 n8n webhook，對應 Django 新核心 `parse_purchase_request_candidate()` 依賴、但至今從未匯出進版控的「v2 純解析」workflow（`N8N_INQUIRY_PARSE_WEBHOOK_URL`，路徑 `purchase-request-candidate`），續傳流程改打這個新 webhook；(b) Django 直接在內部呼叫既有的候選解析邏輯，完全略過 n8n 負責「續傳編排」這一段（n8n 續傳 webhook 本身不再被呼叫），但解析品項仍需要呼叫外部 LLM，因此沿用（a）方案中同一個「v2 純解析」webhook 作為底層 AI 呼叫依賴。使用者選擇 (b)：Django 直接接管續傳編排本身，不再依賴 n8n 續傳 webhook 這一層；但「呼叫外部 LLM 解析品項」這個步驟不會、也不可能被略過，繼續透過既有的 v2 純解析 webhook 完成（與 `/inquiries/parse/` 主流程共用同一個 n8n 端點，非新增依賴）。
+
+**決策**：
+1. 人工複核核准 `supplier_fuzzy_match` 案件後，`manual_review_service.decide_review()` 呼叫的 `inquiry_resume_service.trigger_resume()` 改為 Django 內部直接呼叫 `inquiry_service.resolve_candidate_after_manual_review()`，不再呼叫 `N8N_RESUME_WEBHOOK_URL`。
+2. 供應商已由人工確認，不重新跑模糊比對；改用新增的 `masking_service.mask_confirmed_supplier_text()` 鎖定已知供應商全名遮罩後，呼叫既有的候選解析 n8n webhook（`N8N_INQUIRY_PARSE_WEBHOOK_URL`）解析品項/數量。
+3. 解析成功且無缺漏欄位時，自動建立一筆 `PurchaseRequest` 草稿（`source="manual_review_resume"`），發起人可在「我的採購需求」看到並自行編輯提交；解析失敗、欄位缺漏，或發起人沒有建立權限時，不建立草稿，回退為 `resume_triggered=false` 交管理員人工確認。
+4. `masking_service.mask_confirmed_supplier_text()` 找不到任何可定位的供應商片段時必須 fail-closed（拋出例外中止續傳），不得把真實供應商名稱未遮罩送往外部 LLM（NFR-1 沒有例外）。
+
+**理由**：舊決策把「續傳編排」與「LLM 解析呼叫」耦合在同一個 n8n webhook 裡，這個 webhook 內部呼叫的下游端點已經退役卻沒人發現；拆開來看，真正需要 n8n／外部 LLM 的只有「自然語言解析」這一步（Django 沒有能力自己做 NLP），續傳編排本身（要不要建立草稿、失敗要不要重試）屬於 Django 的業務邏輯，讓 Django 直接掌控可以避免「n8n workflow 檔案沒有匯出進版控就沒人知道它其實接到死路」這類斷層再次發生。
+
+**後果**：
+- `services/inquiry_resume_service.py`：`trigger_resume()` 整份改寫，不再呼叫 `requests.post`／`N8N_RESUME_WEBHOOK_URL`。
+- `services/inquiry_service.py`：新增 `resolve_candidate_after_manual_review()`。
+- `services/masking_service.py`：新增 `mask_confirmed_supplier_text()`。
+- `services/manual_review_service.py`／`api/audit/views.py`：`decide` 回應新增 `created_purchase_request_id`。
+- `settings.N8N_RESUME_WEBHOOK_URL`（`config/settings.py`）與 `n8n/workflows/inquiry-flow.json` 的「Webhook 續傳詢價」分支：Django 端已無呼叫者，屬死設定／死分支，本次未刪除（留待之後清理），`docs/reference/deploy.md` 已同步移除「必要環境變數」的標註。
+- **已知缺口，待後續處理**（Codex 2026-09-02 複查提出，見 `docs/specs/DRAFT.md`）：`resume_triggered`／`created_purchase_request_id` 目前仍是 in-memory-only transient 欄位，未落地 DB；`decide_review()` 把複核案件標記 `resolved` 的 DB 交易在呼叫 `trigger_resume()` 之前就已提交，若續傳當下失敗（AI 服務逾時、無建立權限等），沒有任何持久化狀態或重試入口，管理員事後重新整理只會看到案件已處理，無法得知草稿到底有沒有建立。是否需要新增 `resume_status`／`created_purchase_request_id`（落地 DB）欄位與受權限控制的重試 API，需另行提出 Migration 影響、資料轉換與回滾方案，取得使用者核准後才實作。**此缺口已於下方 2026-09-02「持久化續傳狀態與重試」條目解決。**
+
+## 2026-09-02 [標籤：使用者] 持久化續傳狀態與重試（解決上方「已知缺口，待後續處理」）
+
+**狀態**：accepted
+
+**背景**：上方條目的「已知缺口」——續傳結果（`resume_triggered`／`created_purchase_request_id`）只存在於單次 request 的記憶體中，決議 DB 交易早於續傳邏輯提交，續傳失敗時無持久化狀態可查、也無重試入口。使用者選擇「現在就做」，並要求先提出 Migration 方案（影響範圍、資料轉換、鎖表風險、回滾方案）取得核准後才實作。
+
+**討論內容**：提出的 Migration 方案——`manual_review_queue` 新增 3 個欄位：`resume_status`（`not_applicable`／`pending`／`succeeded`／`failed`，預設 `not_applicable`）、`resume_error_code`（非敏感錯誤代碼，不含原始例外訊息或供應商名稱）、`created_purchase_request_id`（FK → `purchase_requests.id`，`on_delete=SET_NULL`）；2 個 CheckConstraint 確保 `succeeded` 必有草稿 id、`failed` 必有錯誤代碼；`decide_review()` 改成兩階段寫入（交易內先把 `resume_status` flip 成 `pending` 再提交，交易外呼叫 `trigger_resume()` 後第二次寫入最終狀態），沿用原本「外部呼叫不佔用 DB 鎖」的設計；新增 `retry_resume()`／`POST .../retry-resume/`，僅 `resume_status=failed` 時可重試，用 `select_for_update()` 鎖列驗證前置條件避免併發重試。所有新欄位皆有預設值／允許 null，不需要資料回填既有案件（本來就沒有任何案件曾經是 `succeeded`／`failed`，全部套用預設 `not_applicable` 即符合語意）。使用者一併核准把過時的前端 `ManualReviewView.vue`（`resume_triggered === false` 判斷）同步修正。
+
+**決策**：
+1. 依上述方案新增 Migration `audit/0004_manualreviewqueue_created_purchase_request_and_more`（3 欄位＋2 CheckConstraint，無資料回填）。
+2. `trigger_resume()` 回傳值從 `PurchaseRequest | None` 改為 `(draft, error_code)` tuple；新增 `InquiryUnmaskableSupplierError(InquiryValidationError)` 讓「找不到可定位的供應商片段」對應到獨立的 `resume_error_code=unmaskable_supplier`，而不是與其他輸入驗證錯誤混在一起。
+3. `manual_review_service.py` 新增 `retry_resume(review_id, user_id)`，需要 `manual_review.decide` 權限；`decide_review()` 與 `retry_resume()` 共用 `_execute_resume_and_persist()` 落地最終狀態。
+4. API 層 `ManualReviewQueueSerializer` 直接暴露 `resume_status`／`resume_error_code`／`created_purchase_request` 三個真實欄位，`api/audit/views.py` 移除原本 `hasattr`/`getattr` 拼裝 transient 欄位的寫法；新增 `POST /api/v1/manual-review-queue/{id}/retry-resume/`。
+5. `frontend/src/views/ManualReviewView.vue` 改讀 `resume_status`／`resume_error_code`，新增「重試續傳」按鈕（`resume_status=failed` 時顯示）。
+
+**理由**：把「決議是否成功」與「續傳是否成功」拆成兩個各自持久化的狀態，管理員才能在案件列表直接看出「核准了，但草稿還沒建出來，需要重試」，不需要靠翻 log 或問工程師；兩階段寫入沿用 `decide_review()` 原本就有的「DB 決議結果先落地、外部呼叫失敗不回滾」設計，不新增額外的鎖表風險；CheckConstraint 讓「succeeded 卻沒有草稿 id」這種髒資料在 DB 層就被擋下，不只靠程式碼判斷（符合 AGENTS.md Database Schema Design 原則）。
+
+**後果**：
+- `apps/audit/models.py`／`apps/audit/migrations/0004_*.py`：新增 3 欄位＋2 CheckConstraint。
+- `services/inquiry_service.py`：新增 `InquiryUnmaskableSupplierError`。
+- `services/inquiry_resume_service.py`：`trigger_resume()` 回傳值改為 tuple，新增 `RESUME_ERROR_*` 錯誤代碼常數。
+- `services/manual_review_service.py`：`decide_review()` 兩階段寫入、新增 `retry_resume()`／`_execute_resume_and_persist()`。
+- `schemas/audit.py`／`api/audit/views.py`：serializer 新增 3 欄位；新增 `retry-resume` action；`decide`／`claim` 共用例外轉 Response 的 helper。
+- `frontend/src/views/ManualReviewView.vue`／`frontend/src/types/api.ts`：改讀持久化欄位，新增重試按鈕。
+- 測試：`tests/test_manual_review_service.py`（CheckConstraint、`retry_resume()`）、`tests/test_inquiry_resume_service.py`／`tests/test_inquiry_service.py`（新錯誤代碼／例外）、`tests/test_api_phase3.py`（`decide`／`retry-resume` API）。
+- 未驗證範圍：併發重試（兩個管理員同時對同一失敗案件呼叫 retry-resume）僅靠 `select_for_update()` 鎖列防護，未寫專門的併發測試（DB 層鎖語意本身有保證，邏輯上第二個請求會在第一個提交後看到 `resume_status` 已變成 `pending`／`succeeded`／`failed` 而非 `failed`，因而被 409 擋下，但未實際跑多執行緒/多連線測試驗證）。

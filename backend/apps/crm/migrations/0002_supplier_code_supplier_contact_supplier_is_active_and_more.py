@@ -8,6 +8,12 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('crm', '0001_initial'),
+        # 2026-09-02 修正：本檔案的 RunSQL 會建立使用 set_row_updated_at() 的 trigger，
+        # 該函式由 core.0003 建立；從全新資料庫 migrate 時若沒有明確宣告依賴，
+        # 兩個 app 之間沒有相依邊，拓樸排序可能把本檔排到 core.0003 之前執行，
+        # 導致 `function set_row_updated_at() does not exist`（見
+        # docs/ADR/debug/phase5-security.md）。
+        ('core', '0003_permission_rolepermission_userrole'),
     ]
 
     operations = [

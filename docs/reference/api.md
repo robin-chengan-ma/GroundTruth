@@ -57,10 +57,10 @@ rotation／撤銷狀態，不保存 Token 明文。
 | suppliers、products、product-categories | 已登入使用者；n8n 可用內部 API Key 唯讀查詢 suppliers／products | 讀取需 `master_data.read`、寫入需 `master_data.manage`（`AuthenticatedReadAdminWrite`）；主檔不提供實體刪除，一律回 409 `physical_delete_forbidden`，改用 `is_active` 停用 |
 | inventory | 具 `inventory.read`（不可用 `master_data.read` 代替） | 唯讀端點（`ReadOnlyModelViewSet`）；Phase 1 舊 `Inventory` model（`stock_qty`／`threshold`），`stock_qty` 已停止由正式收貨驗收流程更新，僅供歷史查閱 |
 | inventory-balances、inventory-movements | 具 `inventory.read` | 唯讀端點；FR-10a 真正庫存來源（`InventoryBalance` 查詢快照／`InventoryMovement` 不可覆寫流水帳），Phase 6 起取代舊 `inventory` 端點作為庫存頁面資料來源 |
-| purchase-suggestions | 具 `purchase_suggestion.read`（list／retrieve 專用；convert／dismiss 不套用此權限碼，各自的授權見下方 API 表） | 通用 API 唯讀；具 `purchase_request.create` 可轉單，僅 admin 可忽略未轉單建議 |
-| quotes | legacy 歷史查詢沿用既有本人／角色／admin 範圍 | 通用 API 唯讀；legacy 建單與驗證 command 已停用，撤回 action 待後續切換 |
+| purchase-suggestions | 具 `purchase_suggestion.read`（list／retrieve 專用；convert／dismiss 不套用此權限碼，各自的授權見下方 API 表） | 通用 API 唯讀；具 `purchase_request.create` 可轉單，忽略未轉單建議須具 `purchase_suggestion.dismiss`（不綁定角色字串，見 `docs/ADR/discuss/erp.md`） |
+| quotes | legacy 歷史查詢改用 permission code（Phase 5 修復，見 `docs/ADR/debug/phase5-security.md` 2026-09-02 條目）：`audit.read` 見全部；`approval.read_all` 見自己角色曾經手簽核的詢價＋本人；僅 `purchase_request.read_own` 只見本人；三者皆無回 403 | 通用 API 唯讀；legacy 建單、驗證與撤回 command 皆已回 410 `legacy_command_retired`，不再接受正式寫入 |
 | approval-cases、approval-steps | `approval.read_all` 只見有效角色對應案件；`audit.read` 可唯讀全部 | 僅符合目標角色及 permission codes 者可認領／決議；決議理由必填，禁止申請人自簽與跨角色代簽 |
-| approvals | legacy 歷史查詢沿用既有角色／admin 範圍 | `claim`／`decide` 已停用並回 410；不再接受正式寫入 |
+| approvals | legacy 歷史查詢改用 permission code（同上）：`audit.read` 見全部；`approval.read_all` 只見自己角色的歷史簽核紀錄；兩者皆無回 403 | `claim`／`decide` 已停用並回 410；不再接受正式寫入 |
 | purchase-request-drafts | 具 `purchase_request.read_own` 者只見本人草稿 | create／edit_draft／submit 分別檢查對應 RBAC；只有 draft 可修改或刪除 |
 | purchase-requests | 具 `purchase_request.read_own` 者只見本人全部需求 | 唯讀清單；正式狀態異動必須使用各流程明確 action，不提供通用 CRUD |
 | rfqs、supplier-quotes | 具 `rfq.manage`／`supplier_quote.manage` 或 `audit.read`（唯讀）；一般申請人不開放 | RFQ 只能由明確 issue action 發出；報價只能建立草稿、提交或建立 revision，不提供通用更新／刪除 |
@@ -771,7 +771,7 @@ X-Internal-Api-Key: <INTERNAL_API_KEY>
 ```json
 { "raw_text": "跟優品科技採購20個A產品，總金額NT$30,000元", "user_id": 1 }
 ```
-`user_id`：選填，詢價發起人。有帶入時，若結果為 `supplier_fuzzy_match`（寫入複核佇列），會存進 `manual_review_queue.requester`，供核准後 n8n 續傳流程（見下方 `masking/mask-amounts-only/`）帶回原始發起人身分。
+`user_id`：選填，詢價發起人。有帶入時，若結果為 `supplier_fuzzy_match`（寫入複核佇列），會存進 `manual_review_queue.requester`，供核准後 Django 直接重新解析（見 `POST /api/v1/manual-review-queue/{id}/decide/` 核准 `supplier_fuzzy_match` 段落，2026-09-02 改版）帶回原始發起人身分。
 
 **Response（200，`outcome: "masked"`）**：精確比對到剛好 1 間供應商，遮罩成功。
 ```json
@@ -799,7 +799,7 @@ X-Internal-Api-Key: <INTERNAL_API_KEY>
 
 ## POST /api/v1/masking/mask-amounts-only/
 
-FR-6a：供應商模糊比對案件核准後，n8n 續傳流程專用。此時供應商身分已由人工確認，不需要再猜測或比對供應商名稱，只需要重新遮罩金額後送 LLM 解析品項/數量。只給 n8n 呼叫。
+FR-6a：供應商模糊比對案件核准後，n8n 續傳流程專用。此時供應商身分已由人工確認，不需要再猜測或比對供應商名稱，只需要重新遮罩金額後送 LLM 解析品項/數量。只給 n8n 呼叫。**現況（2026-09-02）**：`POST /api/v1/manual-review-queue/{id}/decide/` 核准 `supplier_fuzzy_match` 案件後，主要路徑已改為 Django 直接呼叫（見該端點文件），不再經由這支端點；此端點程式碼與路由本身未刪除，若 Robin 自己維護的 n8n workflow 仍有分支呼叫它，功能維持正常。
 
 **Request Headers**
 ```
@@ -874,18 +874,32 @@ FR-6a／FR-6c：決議案件（核准／駁回），僅提供 SPEC 定義的有�
 { "decision": "approved", "supplier_id": 7 }
 ```
 
-**核准（`hallucination_mismatch`）**：丟棄 LLM 生成摘要，改用 `services/quote_summary_template.py` 的固定樣板依真實數字組出文字寫回 `quotes.ai_summary_text`，`quotes.status` 進至 `pending_approval`。
-**駁回（`hallucination_mismatch`）**：`quotes.status` 改為 `cancelled`（詢價作廢，通知申請人重新送出，Gmail 通知留待 n8n 串接）。
-**核准（`supplier_fuzzy_match`）**：確認 `manual_review_queue.supplier_id`；DB 交易確定提交後，Django 主動呼叫 n8n 的 `N8N_RESUME_WEBHOOK_URL`（`POST .../webhook/inquiry/resume`），帶 `review_id`／`raw_input_text`／`user_id`（`manual_review_queue.requester`，原始詢價發起人）／`supplier_id`，交還 n8n 重新走一次「遮罩金額→LLM 解析→查詢→試算→摘要→幻覺驗證」流程（見 `docs/ADR/discuss/main-flow.md`）。呼叫 n8n 失敗（連線問題、逾時、非 2xx）不影響這支 API 本身的核准結果——DB 裡供應商已確認的事實不因外部呼叫失敗而回滾。
-**駁回（`supplier_fuzzy_match`）**：不異動供應商欄位，不呼叫 n8n，通知申請人確認供應商全名後重新送出。
+**`hallucination_mismatch` 案件已全面退役**：`_ensure_active_review()` 一律拋出 `LegacyManualReviewRetiredError`（API 回 410 `legacy_command_retired`），核准／駁回都不會執行；`services/quote_summary_template.py` 這個舊版樣板檔案已刪除，不再有任何程式碼引用。此類案件僅供歷史查閱，不能再決議。
+**核准（`supplier_fuzzy_match`）**（2026-09-02 改版，見 `docs/ADR/debug/phase5-security.md`）：確認 `manual_review_queue.supplier_id`；DB 交易確定提交（含把 `resume_status` 先落地為 `pending`）後，Django 直接在內部重新解析原始需求，不再交還 n8n 續傳 webhook（該路徑舊版會打進已退役的 `quotes/calculate/`／`quotes/verify-hallucination/`，核准後實際上無法完成）。流程：用已確認的供應商全名重新遮罩原始輸入（`mask_confirmed_supplier_text`，不重新跑模糊比對；找不到可定位的供應商片段時 fail-closed 中止，不會把真實供應商名稱未遮罩送往外部 LLM）→ 呼叫既有的候選解析 n8n webhook（與 `POST /api/v1/inquiries/parse/` 共用同一個端點；此端點仍是必要的外部 AI 呼叫，「略過 n8n」指的是不再由 n8n 負責續傳編排本身，不是不需要任何 n8n／LLM 呼叫）解析品項 → 解析成功且無缺漏欄位時，自動建立一筆 `PurchaseRequest` 草稿（`source="manual_review_resume"`，`requester` 為原始詢價發起人），可在「我的採購需求」看到並自行編輯提交。解析失敗（AI 服務連線失敗、格式錯誤、無法安全定位供應商名稱）、仍有缺漏欄位、或發起人沒有 `purchase_request.create` 權限等情況，不建立草稿——決議本身仍然成功，只是需要人工確認後續（不影響這支 API 本身的核准結果，DB 裡供應商已確認的事實不因此回滾）。**續傳結果落地保存**（2026-09-02 新增，見 `docs/ADR/discuss/main-flow.md`「持久化續傳狀態與重試」條目、Migration `audit/0004_manualreviewqueue_created_purchase_request_and_more`）：成功／失敗都寫回 `manual_review_queue.resume_status`／`resume_error_code`／`created_purchase_request_id`，失敗時可呼叫 `POST /api/v1/manual-review-queue/{id}/retry-resume/` 重試，不需要整個案件重新走一次核准流程。
+**駁回（`supplier_fuzzy_match`）**：不異動供應商欄位，不觸發重新解析，通知申請人確認供應商全名後重新送出；`resume_status` 維持預設值 `not_applicable`。
 
-**Response（200）**：回傳更新後的 `manual_review_queue` 資料列（`status` 變為 `resolved`）。核准 `supplier_fuzzy_match` 案件時，回應多一個 `resume_triggered`（布林值，非 DB 欄位）：`true` 表示已成功通知 n8n 續傳，`false` 表示通知失敗（決議本身仍然成功，但需要人工確認 n8n 那邊是否要手動觸發）。
+**Response（200）**：回傳更新後的 `manual_review_queue` 資料列（`status` 變為 `resolved`），含 `resume_status`（`not_applicable`／`pending`／`succeeded`／`failed`）、`resume_error_code`（`resume_status=failed` 時的非敏感錯誤代碼；成功或不適用時為 `null`）、`created_purchase_request`（`resume_status=succeeded` 時為自動建立的採購需求草稿 id，可用於導去 `GET /api/v1/purchase-requests/{id}/`，否則為 `null`）。`resume_error_code` 合法值：`invalid_input`（原始輸入為空）、`unmaskable_supplier`（找不到可定位的供應商片段，fail-closed 中止）、`parse_failed`（AI 需求解析服務逾時／連線失敗／回傳格式錯誤，可重試）、`missing_fields`（解析成功但仍有缺漏欄位）、`permission_denied`（發起人沒有 `purchase_request.create` 權限）、`draft_creation_failed`（品項/供應商在建立當下被停用等）、`resume_data_error`（找不到已確認的供應商／原始發起人，理論上不該發生的資料整合性問題）。
 
 **Response（400）**：`decision` 缺漏、`decision` 非 `approved`／`rejected`、或核准模糊比對案件卻缺少可用的 `supplier_id`。
 
 **Response（401／403）**：未登入／非管理員。
 
 **Response（409）**：案件尚未認領、已結案，或非本人認領。
+
+## POST /api/v1/manual-review-queue/{id}/retry-resume/
+
+FR-6a 續傳重試（2026-09-02 新增，見 `docs/ADR/discuss/main-flow.md`「持久化續傳狀態與重試」條目）：只有已核准的 `supplier_fuzzy_match` 案件、且上次續傳結果為 `resume_status=failed` 時才能重試，不需要整個案件重新走一次核准流程；成功／再次失敗的結果落地方式與 `decide` 核准時相同。權限與 `decide` 相同（需 `manual_review.decide`）。
+
+**Request Body**
+無 Request Body。
+
+**Response（200）**：回傳更新後的 `manual_review_queue` 資料列（`resume_status` 依重試結果變為 `succeeded`／`failed`）。
+
+**Response（400）**：案件不存在、非 `supplier_fuzzy_match`、尚未核准、或原始輸入/發起人/供應商資料整合性問題。
+
+**Response（401／403）**：未登入／非管理員。
+
+**Response（409）**：案件目前 `resume_status` 不是 `failed`（例如仍在 `pending` 或已 `succeeded`），無法重試。
 
 ## GET /api/v1/audit-dashboard/stats/
 
@@ -940,8 +954,9 @@ SPEC「採購稽核與流程健康總覽」FR-1～5 統計聚合，需 `audit.re
 
 ### POST /api/v1/quotes/{id}/withdraw/
 
-本人可撤回狀態為 `pending_approval` 的採購單。成功時 Quote 與 Approval 同步改為 `cancelled` 並寫入
-Audit Log；非本人回 400，案件不存在回 404，已結案或狀態不符回 409。
+legacy 撤回 command 已停用。任何已登入使用者呼叫皆統一回 `410 Gone`／`legacy_command_retired`（不
+套用 `quotes` 唯讀查詢用的 permission code，避免把「已停用」誤呈現成「沒有權限」），Quote／Approval
+狀態不會被改動。正式撤回請改用 `POST /api/v1/purchase-requests/{id}/withdraw/`。
 
 ### POST /api/v1/approvals/{id}/claim/／POST /api/v1/approvals/{id}/decide/
 

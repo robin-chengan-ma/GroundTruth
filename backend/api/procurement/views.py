@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from api.core.permissions import HasAnyPermissionCode
 from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
 from lib.pagination import paginate_response, parse_optional_bool
@@ -639,18 +640,32 @@ class PurchaseRequestViewSet(viewsets.ViewSet):
 
 
 class QuoteViewSet(viewsets.ReadOnlyModelViewSet):
+    """legacy 詢價歷史唯讀查詢（Phase 5：全域授權改用 permission code，不再用角色字串推測範圍）。
+
+    可視範圍依權限由廣到窄疊代：`audit.read` 可見全部歷史；`approval.read_all`（可簽核角色）
+    見自己角色曾經手的簽核所屬詢價＋本人詢價；只有 `purchase_request.read_own` 只見本人詢價。
+    三者皆無則 permission_classes 直接擋在 403，不落到 get_queryset()。
+    """
+
     serializer_class = QuoteSerializer
     authentication_classes = [BusinessJwtAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    required_permissions = ("audit.read", "approval.read_all", "purchase_request.read_own")
+
+    def get_permissions(self):
+        # withdraw 是已退役的 legacy 寫入 action，固定回 410 告知呼叫端已停用，
+        # 不應該被唯讀範圍用的 permission code 擋成 403（那會誤導成「沒權限」而非「已停用」）。
+        if self.action == "withdraw":
+            return [permissions.IsAuthenticated()]
+        return [HasAnyPermissionCode()]
 
     def get_queryset(self):
         queryset = QuoteRepository.all()
         user = self.request.user
-        if user.role.role == "admin":
+        if user_has_permission(user, "audit.read"):
             return queryset
-        if user.role.role == "employee":
-            return queryset.filter(user=user)
-        return queryset.filter(Q(approvals__role=user.role) | Q(user=user)).distinct()
+        if user_has_permission(user, "approval.read_all"):
+            return queryset.filter(Q(approvals__role=user.role) | Q(user=user)).distinct()
+        return queryset.filter(user=user)
 
     @action(detail=True, methods=["post"])
     def withdraw(self, request, pk=None):
@@ -658,13 +673,25 @@ class QuoteViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):
+    """legacy 簽核歷史唯讀查詢（Phase 5：全域授權改用 permission code，不再用角色字串推測範圍）。
+
+    `audit.read` 可見全部歷史；`approval.read_all` 只見自己角色的歷史簽核紀錄；兩者皆無則
+    permission_classes 直接擋在 403。claim／decide 是已退役的 legacy 寫入 action，固定回 410，
+    不套用此唯讀範圍限制（理由同 QuoteViewSet.withdraw）。
+    """
+
     serializer_class = ApprovalSerializer
     authentication_classes = [BusinessJwtAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+    required_permissions = ("audit.read", "approval.read_all")
+
+    def get_permissions(self):
+        if self.action in ("claim", "decide"):
+            return [permissions.IsAuthenticated()]
+        return [HasAnyPermissionCode()]
 
     def get_queryset(self):
         queryset = ApprovalRepository.all()
-        if self.request.user.role.role == "admin":
+        if user_has_permission(self.request.user, "audit.read"):
             return queryset
         return queryset.filter(role=self.request.user.role)
 

@@ -1,6 +1,6 @@
 ---
 title: 部署 Reference
-updated: 2026-08-31
+updated: 2026-09-02
 ---
 
 # 部署 Reference
@@ -17,7 +17,7 @@ updated: 2026-08-31
 | 項目 | 內容 |
 | --- | --- |
 | 入口 | `backend/manage.py runserver` |
-| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`、`N8N_INQUIRY_PARSE_WEBHOOK_URL`、`N8N_RESUME_WEBHOOK_URL`；`REFRESH_COOKIE_SECURE` 控制本機 HTTP／HTTPS Cookie Secure 屬性 |
+| 必要環境變數 | `DJANGO_SECRET_KEY`、`DJANGO_DEBUG`、`DJANGO_ALLOWED_HOSTS`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_HOST`、`POSTGRES_PORT`、`INTERNAL_API_KEY`、`N8N_INQUIRY_WEBHOOK_URL`、`N8N_INQUIRY_PARSE_WEBHOOK_URL`；`REFRESH_COOKIE_SECURE` 控制本機 HTTP／HTTPS Cookie Secure 屬性。`N8N_RESUME_WEBHOOK_URL` 有預設值但現況（2026-09-02 起）已無程式碼呼叫，屬死設定，見下方 n8n 區塊說明 |
 | 外部依賴 | 本機 PostgreSQL（Phase 1 起） |
 | Health Check | 尚未建立專用端點；未帶 Token 呼叫 `GET /api/v1/auth/me/` 回 401 可確認 Django 路由存活，不代表 DB 與外部依賴完整健康 |
 | 已知限制 | 尚無專用健康檢查；Refresh Cookie 正式 HTTPS 環境必須設定 `REFRESH_COOKIE_SECURE=true` |
@@ -38,7 +38,7 @@ updated: 2026-08-31
 | 執行方式 | `n8n/docker-compose.yml`（`docker compose up`，於 `n8n/` 目錄執行） |
 | 必要環境變數 | 複製 `n8n/.env.example` 為 `n8n/.env`：`DJANGO_API_BASE_URL`（容器內存取本機 Django 用 `http://host.docker.internal:8000`）、`INTERNAL_API_KEY`（需與 `backend/.env` 一致）、`GEMINI_API_KEY` |
 | 已知限制／踩坑 | n8n 2.x 預設擋 Code/Expression node 存取 `$env`，`docker-compose.yml` 已加 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` 開放，不然 workflow 裡的 `{{$env.xxx}}` 全部會失敗（`access to env vars denied`），本機驗證時發現並記錄，詳見 `docs/ADR/debug/n8n-env-access.md` |
-| Webhook 端點 | 匯入 `n8n/workflows/inquiry-flow.json` 後啟用（active），對外路徑 `POST http://localhost:5678/webhook/inquiry`；另有續傳子流程（FR-6a）路徑 `POST http://localhost:5678/webhook/inquiry/resume`，供 Django 核准供應商模糊比對案件後主動呼叫 |
+| Webhook 端點 | 匯入 `n8n/workflows/inquiry-flow.json` 後啟用（active），對外路徑 `POST http://localhost:5678/webhook/inquiry`。該檔案內的續傳子流程路徑 `POST http://localhost:5678/webhook/inquiry/resume` 現況（2026-09-02 起）已是死分支：`manual_review_service.decide_review()` 核准供應商模糊比對案件後改為 Django 直接重新解析並嘗試自動建立採購需求草稿，不再呼叫這支 webhook（決策見 `docs/ADR/discuss/main-flow.md` 對應條目）；實際解析品項仍呼叫 `N8N_INQUIRY_PARSE_WEBHOOK_URL`（`webhook/purchase-request-candidate`，與 `/inquiries/parse/` 主流程共用），但該端點未匯出進本檔案，只存在於 Robin 自行維護的 n8n 實例 |
 | 對外埠 | `5678` |
 | Health Check | `GET http://localhost:5678/healthz` |
 | 目前無基礎設施 | 沒有另外的 basic auth／對外網址；只在本機 Docker 跑，正式對外使用前應補上驗證 |

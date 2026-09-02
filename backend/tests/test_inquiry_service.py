@@ -7,8 +7,10 @@ from apps.crm.models import Supplier
 from apps.erp.models import Product
 from services.inquiry_service import (
     InquiryTriggerError,
+    InquiryUnmaskableSupplierError,
     InquiryValidationError,
     parse_purchase_request_candidate,
+    resolve_candidate_after_manual_review,
     trigger_inquiry,
 )
 
@@ -234,3 +236,68 @@ def test_parse_candidate_rejects_malformed_n8n_payload(mock_parse, supplier):
 
     with pytest.raises(InquiryTriggerError, match="候選資料格式錯誤"):
         parse_purchase_request_candidate(f"跟{supplier.name}測試", user_id=1)
+
+
+# ---- resolve_candidate_after_manual_review（FR-6a 人工複核核准後續傳流程，2026-09-02 改版） ----
+
+@pytest.mark.django_db
+@patch("services.inquiry_service.request_candidate_parse")
+def test_resolve_candidate_after_manual_review_resolves_items_with_confirmed_supplier(
+    mock_parse, user, product, supplier,
+):
+    mock_parse.return_value = {
+        "purpose": "辦公設備汰換",
+        "currency": "twd",
+        "items": [{
+            "product_name": product.name,
+            "quantity": "5",
+            "unit_of_measure": "EA",
+            "specifications": {"material": "網布"},
+        }],
+    }
+
+    result = resolve_candidate_after_manual_review(
+        f"跟{supplier.name}採購 5 張測試產品", supplier=supplier, requester_id=user.id,
+    )
+
+    assert result["ready_for_draft"] is True
+    assert result["supplier_id"] == supplier.id
+    assert result["items"][0]["product_id"] == product.id
+    assert result["items"][0]["quantity"] == "5"
+    # 供應商已由人工確認，不應再把供應商名稱送給外部 LLM。
+    sent_text = mock_parse.call_args.args[0]
+    assert supplier.name not in sent_text
+    assert "SUP_001" in sent_text
+    assert mock_parse.call_args.kwargs == {"user_id": user.id}
+
+
+@pytest.mark.django_db
+@patch("services.inquiry_service.request_candidate_parse")
+def test_resolve_candidate_after_manual_review_missing_product_not_ready(mock_parse, user, supplier):
+    mock_parse.return_value = {
+        "purpose": "補貨",
+        "items": [{"product_name": "不存在品項", "quantity": 5}],
+    }
+
+    result = resolve_candidate_after_manual_review(
+        f"跟{supplier.name}採購一批不存在品項", supplier=supplier, requester_id=user.id,
+    )
+
+    assert result["ready_for_draft"] is False
+    assert "items.0.product_id" in result["missing_fields"]
+
+
+@pytest.mark.django_db
+def test_resolve_candidate_after_manual_review_empty_raw_text_raises(user, supplier):
+    with pytest.raises(InquiryValidationError):
+        resolve_candidate_after_manual_review("   ", supplier=supplier, requester_id=user.id)
+
+
+@pytest.mark.django_db
+def test_resolve_candidate_after_manual_review_unmaskable_supplier_raises_dedicated_subclass(user, supplier):
+    # raw_text 完全沒有供應商名稱片段可定位時，masking_service 會 fail-closed 拋出
+    # MaskingError；這裡要轉成專屬子類別（而不是一般 InquiryValidationError），讓
+    # inquiry_resume_service.trigger_resume 能對應到獨立的 resume_error_code
+    # （2026-09-02 新增，見 docs/ADR/debug/phase5-security.md）。
+    with pytest.raises(InquiryUnmaskableSupplierError):
+        resolve_candidate_after_manual_review("完全無關的內容", supplier=supplier, requester_id=user.id)

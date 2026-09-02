@@ -90,6 +90,9 @@ export interface ManualReview {
   user: number | null
   claimant_name: string | null
   decision: string | null
+  resume_status: 'not_applicable' | 'pending' | 'succeeded' | 'failed'
+  resume_error_code: string | null
+  created_purchase_request: number | null
   created_at: string
   updated_at: string
 }

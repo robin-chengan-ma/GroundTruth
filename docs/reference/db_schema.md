@@ -1,6 +1,6 @@
 ---
 title: DB Schema
-updated: 2026-08-30
+updated: 2026-09-02
 ---
 
 # DB Schema
@@ -12,7 +12,7 @@ updated: 2026-08-30
 > crm `0002_supplier_code_supplier_contact_supplier_is_active_and_more`、
 > erp `0008_variance_case_close_guard`、
 > procurement `0011_purchase_request_rejected_status`、
-> audit `0003_manualreviewqueue_requester`。
+> audit `0004_manualreviewqueue_created_purchase_request_and_more`。
 
 ## Phase 4.1 A1～A3
 
@@ -342,7 +342,7 @@ Quote 依現行金額門檻補建一筆路由；不修改已有 Approval 的案�
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | 否 | auto | PK | | | |
 | quote_id | bigint | 是 | null | | → quotes.id | Index | supplier_fuzzy_match 案件在 Mask 階段建立，尚無 Quote，此欄位為 null；hallucination_mismatch 案件照樣填值 |
-| requester_user_id | bigint | 是 | null | | → users.id | Index | 原始詢價發起人，供模糊比對核准後續傳流程建立 Quote |
+| requester_user_id | bigint | 是 | null | | → users.id | Index | 原始詢價發起人，模糊比對核准後 Django 直接續傳解析時用來建立採購需求草稿 |
 | review_type | varchar(30) | 否 | — | | | | hallucination_mismatch／supplier_fuzzy_match |
 | ai_generated_text | text | 是 | null | | | | 幻覺案件用 |
 | expected_value | text | 是 | null | | | | 原始真實數字（JSON），幻覺案件用 |
@@ -351,8 +351,15 @@ Quote 依現行金額門檻補建一筆路由；不修改已有 Approval 的案�
 | status | varchar(20) | 否 | 'unclaimed' | | | | unclaimed／claimed／resolved |
 | user_id | bigint | 是 | null | | → users.id | | 認領/處理的管理員 |
 | decision | varchar(20) | 是 | null | | | | approved／rejected |
+| resume_status | varchar(20) | 否 | 'not_applicable' | | | | not_applicable／pending／succeeded／failed，supplier_fuzzy_match 核准後續傳解析的持久化狀態 |
+| resume_error_code | varchar(40) | 是 | null | | | | resume_status=failed 時的非敏感錯誤代碼，不含原始例外訊息或供應商名稱 |
+| created_purchase_request_id | bigint | 是 | null | | → purchase_requests.id | | resume_status=succeeded 時自動建立的採購需求草稿 |
 | created_at | timestamp | 否 | now() | | | | |
-| updated_at | timestamp | 否 | now() | | | | 認領/決議時更新 |
+| updated_at | timestamp | 否 | now() | | | | 認領/決議/續傳結果更新時更新 |
+
+CheckConstraint（2026-09-02 新增，Migration `audit/0004_manualreviewqueue_created_purchase_request_and_more`）：
+`resume_status='succeeded'` 時 `created_purchase_request_id` 不得為 null；`resume_status='failed'` 時
+`resume_error_code` 不得為 null。
 
 ## audit_logs（稽核 log）
 

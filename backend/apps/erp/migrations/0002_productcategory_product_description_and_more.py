@@ -9,6 +9,10 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('erp', '0001_initial'),
+        # 2026-09-02 修正：本檔案的 RunSQL 會建立使用 set_row_updated_at() 的 trigger，
+        # 該函式由 core.0003 建立；理由同 crm.0002 的相同修正，見
+        # docs/ADR/debug/phase5-security.md。
+        ('core', '0003_permission_rolepermission_userrole'),
     ]
 
     operations = [

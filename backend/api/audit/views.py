@@ -15,6 +15,7 @@ from services.manual_review_service import (
     ManualReviewError,
     claim_review,
     decide_review,
+    retry_resume,
 )
 from services.masking_service import (
     MaskingError,
@@ -35,6 +36,16 @@ class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return super().get_permissions()
 
+    def _resume_conflict_or_error_response(self, exc):
+        if isinstance(exc, LegacyManualReviewRetiredError):
+            return Response(
+                {"detail": str(exc), "code": "legacy_command_retired"},
+                status=status.HTTP_410_GONE,
+            )
+        if isinstance(exc, ManualReviewConflictError):
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
     def get_queryset(self):
         return ManualReviewQueueRepository.all()
 
@@ -43,21 +54,20 @@ class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
         """FR-6b：認領案件，避免多位管理員同時處理同一案件（衝突回 409）。"""
         try:
             review = claim_review(pk, request.user.id)
-        except LegacyManualReviewRetiredError as exc:
-            return Response(
-                {"detail": str(exc), "code": "legacy_command_retired"},
-                status=status.HTTP_410_GONE,
-            )
-        except ManualReviewConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ManualReviewError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return self._resume_conflict_or_error_response(exc)
 
         return Response(ManualReviewQueueSerializer(review).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def decide(self, request, pk=None):
-        """FR-6a／FR-6c：決議案件（核准/駁回），依 review_type 分流，並寫入稽核 log。"""
+        """FR-6a／FR-6c：決議案件（核准/駁回），依 review_type 分流，並寫入稽核 log。
+
+        supplier_fuzzy_match 案件核准後的續傳解析結果（是否自動建立採購需求草稿）落地在
+        回應的 resume_status／resume_error_code／created_purchase_request 欄位（2026-09-02
+        改版，見 docs/ADR/discuss/main-flow.md）；resume_status=failed 時可呼叫
+        retry-resume 重試，不需要整個案件重新走一次核准流程。
+        """
         decision = request.data.get("decision")
         supplier_id = request.data.get("supplier_id")
 
@@ -66,22 +76,21 @@ class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
 
         try:
             review = decide_review(pk, request.user.id, decision, supplier_id=supplier_id)
-        except LegacyManualReviewRetiredError as exc:
-            return Response(
-                {"detail": str(exc), "code": "legacy_command_retired"},
-                status=status.HTTP_410_GONE,
-            )
-        except ManualReviewConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ManualReviewError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return self._resume_conflict_or_error_response(exc)
 
-        data = ManualReviewQueueSerializer(review).data
-        # resume_triggered 只在核准 supplier_fuzzy_match 案件時才會被設定（見
-        # manual_review_service.decide_review()），標示「有沒有成功通知 n8n 續傳流程」。
-        if hasattr(review, "resume_triggered"):
-            data["resume_triggered"] = review.resume_triggered
-        return Response(data, status=status.HTTP_200_OK)
+        return Response(ManualReviewQueueSerializer(review).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="retry-resume")
+    def retry(self, request, pk=None):
+        """FR-6a 續傳重試（2026-09-02 新增）：只有已核准的 supplier_fuzzy_match 案件、且
+        上次續傳結果為 resume_status=failed 時才能重試，狀態不符回 409。"""
+        try:
+            review = retry_resume(pk, request.user.id)
+        except ManualReviewError as exc:
+            return self._resume_conflict_or_error_response(exc)
+
+        return Response(ManualReviewQueueSerializer(review).data, status=status.HTTP_200_OK)
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

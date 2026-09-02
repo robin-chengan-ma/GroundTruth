@@ -226,3 +226,54 @@ def test_mask_amounts_only_no_amounts_returns_empty_mapping():
 def test_mask_amounts_only_empty_raises():
     with pytest.raises(masking_service.MaskingError):
         masking_service.mask_amounts_only("")
+
+
+# ---- mask_confirmed_supplier_text（FR-6a 人工複核核准後續傳流程，2026-09-02 改版） ----
+
+def test_mask_confirmed_supplier_text_exact_match_masks_supplier_and_amount(supplier_a):
+    raw = "跟優品科技採購20個A產品，總金額NT$30,000元"
+    result = masking_service.mask_confirmed_supplier_text(raw, supplier_a)
+
+    assert "優品科技" not in result["masked_text"]
+    assert "SUP_001" in result["masked_text"]
+    assert result["mapping"]["SUP_001"] == "優品科技"
+    assert "NT$30,000元" not in result["masked_text"]
+    assert "20個" in result["masked_text"]
+
+
+def test_mask_confirmed_supplier_text_fuzzy_typo_masks_matched_span_only(supplier_a):
+    # 這正是原本落入 supplier_fuzzy_match 複核佇列的情境：使用者少打一個字。
+    raw = "跟優品科採購A產品"
+    result = masking_service.mask_confirmed_supplier_text(raw, supplier_a)
+
+    assert "優品科" not in result["masked_text"]
+    assert result["masked_text"] == "跟SUP_001採購A產品"
+    assert result["mapping"]["SUP_001"] == "優品科技"
+
+
+def test_mask_confirmed_supplier_text_unlocatable_span_raises_instead_of_leaking_name(supplier_a):
+    # raw_text 完全沒有供應商名稱的任何相似片段（極端情況，理論上不該發生在真實
+    # 複核流程）：NFR-1 要求「送往 LLM 的內容必須先脫敏」，找不到可定位的片段時
+    # 不應該把真實供應商名稱原封不動送出去，必須中止並回報明確錯誤，而不是
+    # fail-open（2026-09-02 修正，見 docs/ADR/debug/phase5-security.md）。
+    raw = "A"
+    with pytest.raises(masking_service.MaskingError):
+        masking_service.mask_confirmed_supplier_text(raw, supplier_a)
+
+
+def test_mask_confirmed_supplier_text_unmask_restores_original_supplier_name(supplier_a):
+    raw = "跟優品科採購A產品，總金額1500元"
+    result = masking_service.mask_confirmed_supplier_text(raw, supplier_a)
+
+    restored = masking_service.unmask_text(result["masked_text"], result["mapping"])
+    assert restored == "跟優品科技採購A產品，總金額1500元"
+
+
+def test_mask_confirmed_supplier_text_empty_raises(supplier_a):
+    with pytest.raises(masking_service.MaskingError):
+        masking_service.mask_confirmed_supplier_text("", supplier_a)
+
+
+def test_mask_confirmed_supplier_text_no_supplier_raises():
+    with pytest.raises(masking_service.MaskingError):
+        masking_service.mask_confirmed_supplier_text("跟優品科技採購A產品", None)

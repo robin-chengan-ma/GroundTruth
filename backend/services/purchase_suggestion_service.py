@@ -91,8 +91,10 @@ def convert_to_draft(user, pk, payload):
 
 @transaction.atomic
 def dismiss(user, pk):
-    if getattr(getattr(user, "role", None), "role", None) != "admin":
-        raise PurchaseSuggestionPermissionDenied("只有系統管理員可以忽略採購建議")
+    """FR-5（ERP 模組）：忽略操作依 docs/ADR/discuss/erp.md 2026-08-28 accepted 決策，改由
+    purchase_suggestion.dismiss 權限控制，不綁定系統管理員角色。"""
+    if not user_has_permission(user, "purchase_suggestion.dismiss"):
+        raise PurchaseSuggestionPermissionDenied("沒有忽略採購建議的權限")
     suggestion = _get_for_update(pk)
     if suggestion.status != PurchaseSuggestion.Status.PENDING:
         raise PurchaseSuggestionConflict("只有待處理的採購建議可以忽略")

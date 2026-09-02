@@ -2,13 +2,21 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from django.db import IntegrityError
 
 from apps.audit.models import ManualReviewQueue
 from apps.core.models import Permission, RolePermission, User, UserRole
 from apps.crm.models import Supplier
-from apps.procurement.models import Quote
+from apps.procurement.models import PurchaseRequest, Quote
 from services import manual_review_service as svc
-from services.inquiry_resume_service import InquiryResumeError
+from services.inquiry_resume_service import RESUME_ERROR_DATA_INTEGRITY, InquiryResumeError
+
+
+def _create_draft(user, *, request_no="PR-TEST-0001"):
+    return PurchaseRequest.objects.create(
+        request_no=request_no, requester=user, purpose="測試草稿", currency="TWD",
+        source="manual_review_resume",
+    )
 
 
 @pytest.fixture
@@ -152,6 +160,8 @@ def test_decide_hallucination_missing_quote_raises(db, admin_user):
 
 @patch("services.manual_review_service.trigger_resume")
 def test_decide_fuzzy_match_approved_with_prefilled_supplier(mock_trigger, db, supplier, admin_user, user):
+    draft = _create_draft(user)
+    mock_trigger.return_value = (draft, None)
     review = ManualReviewQueue.objects.create(
         quote=None,
         review_type=ManualReviewQueue.ReviewType.SUPPLIER_FUZZY_MATCH,
@@ -164,7 +174,9 @@ def test_decide_fuzzy_match_approved_with_prefilled_supplier(mock_trigger, db, s
 
     assert result.status == ManualReviewQueue.Status.RESOLVED
     assert result.supplier_id == supplier.id
-    assert result.resume_triggered is True
+    assert result.resume_status == ManualReviewQueue.ResumeStatus.SUCCEEDED
+    assert result.resume_error_code is None
+    assert result.created_purchase_request_id == draft.id
     mock_trigger.assert_called_once_with(
         review_id=review.id, raw_input_text="跟優品科採購A產品",
         requester_id=user.id, supplier_id=supplier.id,
@@ -184,7 +196,9 @@ def test_decide_fuzzy_match_approved_resume_failure_does_not_fail_decision(mock_
     result = svc.decide_review(review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED)
 
     assert result.status == ManualReviewQueue.Status.RESOLVED
-    assert result.resume_triggered is False
+    assert result.resume_status == ManualReviewQueue.ResumeStatus.FAILED
+    assert result.resume_error_code == RESUME_ERROR_DATA_INTEGRITY
+    assert result.created_purchase_request_id is None
 
 
 def test_decide_fuzzy_match_rejected_does_not_trigger_resume(fuzzy_review, admin_user):
@@ -192,11 +206,13 @@ def test_decide_fuzzy_match_rejected_does_not_trigger_resume(fuzzy_review, admin
     with patch("services.manual_review_service.trigger_resume") as mock_trigger:
         result = svc.decide_review(fuzzy_review.id, admin_user.id, ManualReviewQueue.Decision.REJECTED)
     mock_trigger.assert_not_called()
-    assert not hasattr(result, "resume_triggered")
+    assert result.resume_status == ManualReviewQueue.ResumeStatus.NOT_APPLICABLE
 
 
 @patch("services.manual_review_service.trigger_resume")
-def test_decide_fuzzy_match_approved_with_explicit_supplier_override(mock_trigger, db, admin_user):
+def test_decide_fuzzy_match_approved_with_explicit_supplier_override(mock_trigger, db, admin_user, user):
+    draft = _create_draft(user)
+    mock_trigger.return_value = (draft, None)
     supplier_a = Supplier.objects.create(name="優品科技", tier=Supplier.Tier.NORMAL)
     supplier_b = Supplier.objects.create(name="優品資訊", tier=Supplier.Tier.NORMAL)
     review = ManualReviewQueue.objects.create(
@@ -225,3 +241,110 @@ def test_decide_fuzzy_match_rejected_leaves_supplier_null(fuzzy_review, admin_us
     result = svc.decide_review(fuzzy_review.id, admin_user.id, ManualReviewQueue.Decision.REJECTED)
     assert result.status == ManualReviewQueue.Status.RESOLVED
     assert result.supplier_id is None
+
+
+# ---- ManualReviewQueue CheckConstraint（2026-09-02 新增：持久化續傳狀態） ----
+
+@pytest.mark.django_db
+def test_resume_status_succeeded_without_purchase_request_violates_constraint(fuzzy_review):
+    fuzzy_review.resume_status = ManualReviewQueue.ResumeStatus.SUCCEEDED
+    with pytest.raises(IntegrityError):
+        fuzzy_review.save(update_fields=["resume_status"])
+
+
+@pytest.mark.django_db
+def test_resume_status_failed_without_error_code_violates_constraint(fuzzy_review):
+    fuzzy_review.resume_status = ManualReviewQueue.ResumeStatus.FAILED
+    with pytest.raises(IntegrityError):
+        fuzzy_review.save(update_fields=["resume_status"])
+
+
+@pytest.mark.django_db
+def test_resume_status_failed_with_error_code_is_valid(fuzzy_review):
+    fuzzy_review.resume_status = ManualReviewQueue.ResumeStatus.FAILED
+    fuzzy_review.resume_error_code = "parse_failed"
+    fuzzy_review.save(update_fields=["resume_status", "resume_error_code"])
+    fuzzy_review.refresh_from_db()
+    assert fuzzy_review.resume_status == ManualReviewQueue.ResumeStatus.FAILED
+
+
+# ---- retry_resume（2026-09-02 新增：持久化續傳狀態與重試） ----
+
+def test_retry_resume_success_after_prior_failure(db, supplier, admin_user, user):
+    review = ManualReviewQueue.objects.create(
+        quote=None,
+        review_type=ManualReviewQueue.ReviewType.SUPPLIER_FUZZY_MATCH,
+        raw_input_text="跟優品科採購A產品",
+        supplier=supplier,
+        requester=user,
+    )
+    with patch("services.manual_review_service.trigger_resume") as mock_trigger:
+        mock_trigger.side_effect = InquiryResumeError("boom")
+        svc.claim_review(review.id, admin_user.id)
+        failed = svc.decide_review(review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED)
+    assert failed.resume_status == ManualReviewQueue.ResumeStatus.FAILED
+
+    draft = _create_draft(user, request_no="PR-TEST-RETRY-0001")
+    with patch("services.manual_review_service.trigger_resume") as mock_trigger:
+        mock_trigger.return_value = (draft, None)
+        result = svc.retry_resume(review.id, admin_user.id)
+
+    assert result.resume_status == ManualReviewQueue.ResumeStatus.SUCCEEDED
+    assert result.resume_error_code is None
+    assert result.created_purchase_request_id == draft.id
+    mock_trigger.assert_called_once_with(
+        review_id=review.id, raw_input_text="跟優品科採購A產品",
+        requester_id=user.id, supplier_id=supplier.id,
+    )
+
+
+def test_retry_resume_wrong_status_conflicts(db, supplier, admin_user, user):
+    review = ManualReviewQueue.objects.create(
+        quote=None,
+        review_type=ManualReviewQueue.ReviewType.SUPPLIER_FUZZY_MATCH,
+        raw_input_text="跟優品科採購A產品",
+        supplier=supplier,
+        requester=user,
+    )
+    draft = _create_draft(user, request_no="PR-TEST-RETRY-0002")
+    with patch("services.manual_review_service.trigger_resume") as mock_trigger:
+        mock_trigger.return_value = (draft, None)
+        svc.claim_review(review.id, admin_user.id)
+        result = svc.decide_review(review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED)
+    assert result.resume_status == ManualReviewQueue.ResumeStatus.SUCCEEDED
+
+    with pytest.raises(svc.ManualReviewConflictError):
+        svc.retry_resume(review.id, admin_user.id)
+
+
+def test_retry_resume_wrong_review_type_rejected(hallucination_review, admin_user):
+    with pytest.raises(svc.LegacyManualReviewRetiredError):
+        svc.retry_resume(hallucination_review.id, admin_user.id)
+
+
+def test_retry_resume_not_approved_rejected(fuzzy_review, admin_user):
+    svc.claim_review(fuzzy_review.id, admin_user.id)
+    svc.decide_review(fuzzy_review.id, admin_user.id, ManualReviewQueue.Decision.REJECTED)
+    with pytest.raises(svc.ManualReviewError):
+        svc.retry_resume(fuzzy_review.id, admin_user.id)
+
+
+def test_retry_resume_not_found_raises(admin_user):
+    with pytest.raises(svc.ManualReviewError):
+        svc.retry_resume(99999, admin_user.id)
+
+
+def test_retry_resume_non_admin_rejected(db, supplier, admin_user, user):
+    review = ManualReviewQueue.objects.create(
+        quote=None,
+        review_type=ManualReviewQueue.ReviewType.SUPPLIER_FUZZY_MATCH,
+        raw_input_text="跟優品科採購A產品",
+        supplier=supplier,
+        requester=user,
+    )
+    with patch("services.manual_review_service.trigger_resume") as mock_trigger:
+        mock_trigger.side_effect = InquiryResumeError("boom")
+        svc.claim_review(review.id, admin_user.id)
+        svc.decide_review(review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED)
+    with pytest.raises(svc.ManualReviewError):
+        svc.retry_resume(review.id, user.id)

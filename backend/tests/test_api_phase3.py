@@ -5,8 +5,9 @@ import pytest
 
 from apps.audit.models import ManualReviewQueue
 from apps.core.models import Permission, RolePermission, User, UserRole
-from apps.procurement.models import Quote
+from apps.procurement.models import PurchaseRequest, Quote
 from services.authentication_service import issue_token_pair
+from services.inquiry_resume_service import InquiryResumeError
 
 
 def bearer(user):
@@ -148,6 +149,15 @@ def test_decide_action_missing_fields(api_client, review_for_claim, review_admin
 def test_decide_action_approved_resumes_candidate_parse(
     trigger_resume, api_client, review_for_claim, review_admin, verify_quote,
 ):
+    # 2026-09-02 二次改版：核准後 Django 直接重新解析並嘗試自動建立草稿的結果落地保存
+    # （見 docs/ADR/discuss/main-flow.md「持久化續傳狀態與重試」條目），trigger_resume
+    # 回傳 (draft, error_code) tuple。這裡只驗證 API 層有把回傳值正確帶進 response，
+    # 不重測 trigger_resume 內部邏輯（見 tests/test_inquiry_resume_service.py）。
+    draft = PurchaseRequest.objects.create(
+        request_no="PR-TEST-API-0001", requester=verify_quote.user, purpose="test",
+        currency="TWD", source="manual_review_resume",
+    )
+    trigger_resume.return_value = (draft, None)
     authorization = bearer(review_admin)
     api_client.post(
         f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", HTTP_AUTHORIZATION=authorization
@@ -159,6 +169,9 @@ def test_decide_action_approved_resumes_candidate_parse(
     )
     assert resp.status_code == 200
     assert resp.data["status"] == "resolved"
+    assert resp.data["resume_status"] == "succeeded"
+    assert resp.data["resume_error_code"] is None
+    assert resp.data["created_purchase_request"] == draft.id
 
     trigger_resume.assert_called_once()
 
@@ -171,3 +184,54 @@ def test_decide_action_not_claimed_conflicts(api_client, review_for_claim, revie
         HTTP_AUTHORIZATION=bearer(review_admin),
     )
     assert resp.status_code == 409
+
+
+# ---- manual-review-queue retry-resume（2026-09-02 新增：持久化續傳狀態與重試） ----
+
+@pytest.mark.django_db
+@patch("services.manual_review_service.trigger_resume")
+def test_retry_resume_action_success_after_prior_failure(
+    trigger_resume, api_client, review_for_claim, review_admin, verify_quote,
+):
+    authorization = bearer(review_admin)
+    trigger_resume.side_effect = InquiryResumeError("boom")
+    api_client.post(
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", HTTP_AUTHORIZATION=authorization
+    )
+    approve_resp = api_client.post(
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/decide/",
+        {"decision": "approved", "supplier_id": verify_quote.supplier_id},
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert approve_resp.data["resume_status"] == "failed"
+
+    draft = PurchaseRequest.objects.create(
+        request_no="PR-TEST-API-RETRY-0001", requester=verify_quote.user, purpose="test",
+        currency="TWD", source="manual_review_resume",
+    )
+    trigger_resume.side_effect = None
+    trigger_resume.return_value = (draft, None)
+    retry_resp = api_client.post(
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/retry-resume/",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert retry_resp.status_code == 200
+    assert retry_resp.data["resume_status"] == "succeeded"
+    assert retry_resp.data["created_purchase_request"] == draft.id
+
+
+@pytest.mark.django_db
+def test_retry_resume_action_wrong_status_conflicts(api_client, review_for_claim, review_admin, verify_quote):
+    authorization = bearer(review_admin)
+    resp = api_client.post(
+        f"/api/v1/manual-review-queue/{review_for_claim.id}/retry-resume/",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    # 案件尚未認領/核准，resume_status 仍是 not_applicable，不能重試。
+    assert resp.status_code == 400
+
+
+@pytest.mark.django_db
+def test_retry_resume_action_requires_login(api_client, review_for_claim):
+    resp = api_client.post(f"/api/v1/manual-review-queue/{review_for_claim.id}/retry-resume/")
+    assert resp.status_code == 401

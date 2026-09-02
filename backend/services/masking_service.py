@@ -111,6 +111,50 @@ def mask_text(raw_text: str, requester_id=None) -> dict:
     }
 
 
+def mask_confirmed_supplier_text(raw_text: str, supplier) -> dict:
+    """FR-6a 人工複核核准 supplier_fuzzy_match 案件後續傳流程專用（2026-09-02 改版，
+    見 docs/ADR/debug/phase5-security.md）：供應商已由人工確認，不需要也不應該再重新跑
+    模糊比對（會又繞回複核佇列造成無限迴圈）。
+
+    優先找 raw_text 中與供應商全名「精確子字串」相符的片段直接遮罩；找不到精確命中
+    （例如使用者原始輸入本來就是打錯字、才會落入模糊比對複核）時，改用 `_best_match`
+    找出的最相似片段位置做替換——這裡不再用 FUZZY_MATCH_THRESHOLD／LENGTH_SAFETY_RATIO
+    篩選是否要「自動預填」，因為供應商身分已經是人工確認過的事實，不是待判斷的候選。
+
+    找不到任何足以定位的相似片段時（極端情況，例如 raw_text 遠短於供應商全名）直接
+    拋出 `MaskingError`，中止這次續傳，而不是把真實供應商名稱原封不動送給外部 LLM
+    ——NFR-1「送往 LLM 的內容必須先脫敏」沒有例外，fail-closed 優於 fail-open
+    （2026-09-02 修正：Codex 審查發現原本會 fail-open，見
+    `docs/ADR/debug/phase5-security.md`）。呼叫端（`inquiry_service.resolve_candidate_after_manual_review`）
+    會把這個例外轉換成專屬子類別 `InquiryUnmaskableSupplierError`，`inquiry_resume_service.trigger_resume`
+    再把它對應到獨立的 `RESUME_ERROR_UNMASKABLE_SUPPLIER` 錯誤代碼並落地保存，交管理員人工確認或重試，
+    不影響已提交的複核決議。
+
+    回傳：{"masked_text": str, "mapping": {token: real_value}}（結構比照 mask_amounts_only，
+    供呼叫端後續送進既有候選解析 n8n webhook）。
+    """
+    if not raw_text or not raw_text.strip():
+        raise MaskingError("raw_text 不可為空")
+    if supplier is None or not supplier.name:
+        raise MaskingError("supplier 不可為空")
+
+    name = supplier.name
+    if name in raw_text:
+        start = raw_text.index(name)
+        end = start + len(name)
+    else:
+        _ratio, _match_len, span = _best_match(raw_text, name)
+        start, end = span or (None, None)
+
+    if start is None:
+        raise MaskingError("找不到可定位的供應商片段，無法安全遮罩後續傳送 AI 解析")
+
+    masked = raw_text[:start] + "SUP_001" + raw_text[end:]
+    masked, mapping = _mask_amounts(masked)
+    mapping["SUP_001"] = name
+    return {"masked_text": masked, "mapping": mapping}
+
+
 def mask_amounts_only(raw_text: str) -> dict:
     """FR-6a 模糊比對案件核准後續傳流程專用：供應商已由人工確認（走 supplier_id 直接
     帶給下游，不需要再靠文字比對／Token 化），這裡只需要照常規則遮罩金額，不處理供應商。
@@ -202,7 +246,7 @@ def _find_fuzzy_supplier_candidates(raw_text: str, suppliers) -> list:
         name = supplier.name
         if not name:
             continue
-        best_ratio, best_match_len = _best_match(raw_text, name)
+        best_ratio, best_match_len, _span = _best_match(raw_text, name)
         if best_ratio >= FUZZY_MATCH_THRESHOLD:
             length_safe = best_match_len >= LENGTH_SAFETY_RATIO * len(name)
             candidates.append((supplier, best_ratio, length_safe))
@@ -211,12 +255,18 @@ def _find_fuzzy_supplier_candidates(raw_text: str, suppliers) -> list:
 
 
 def _best_match(raw_text: str, name: str) -> tuple:
-    """回傳 (best_ratio, best_match_len)：最相似片段的相似度，
-    以及該片段與供應商全名之間「最長連續相符子字串」的長度。
+    """回傳 (best_ratio, best_match_len, best_span)：最相似片段的相似度、
+    該片段與供應商全名之間「最長連續相符子字串」的長度，以及該片段在 raw_text 中的
+    位置 `(start, end)`（找不到任何候選視窗時為 None——目前只有 raw_text 短到所有
+    視窗寬度都超過其長度時才會發生，見 raw_text 短於供應商名稱長度的邊界情況）。
+
+    best_span 是給 `mask_confirmed_supplier_text` 用來精確替換原文片段；
+    `_find_fuzzy_supplier_candidates` 沿用既有邏輯，不需要用到位置。
     """
     name_len = len(name)
     best_ratio = 0.0
     best_match_len = 0
+    best_span = None
     # 視窗寬度：供應商名稱長度 -1 ~ +2，容忍使用者輸入略有增減字。
     for width in range(max(1, name_len - 1), name_len + 3):
         if width > len(raw_text):
@@ -229,7 +279,8 @@ def _best_match(raw_text: str, name: str) -> tuple:
                 best_ratio = ratio
                 longest = matcher.find_longest_match(0, len(segment), 0, name_len)
                 best_match_len = longest.size
-    return best_ratio, best_match_len
+                best_span = (start, start + width)
+    return best_ratio, best_match_len, best_span
 
 
 def _apply_masks(raw_text: str, supplier) -> tuple:

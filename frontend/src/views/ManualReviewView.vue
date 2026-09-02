@@ -31,9 +31,17 @@ async function decide(item: ManualReview, decision: 'approved' | 'rejected') {
   }
   try {
     const response = await api.post(`/manual-review-queue/${item.id}/decide/`, { decision, supplier_id: supplierId })
-    if (response.data.resume_triggered === false) error.value = '案件已核准，但 n8n 續傳通知失敗，請人工確認。'
+    if (response.data.resume_status === 'failed') error.value = '案件已核准，但自動建立採購需求草稿失敗，可點擊「重試續傳」再試一次。'
     await load()
   } catch (reason) { error.value = axios.isAxiosError(reason) ? (reason.response?.data?.detail ?? '決議失敗') : '決議失敗' }
+}
+
+async function retryResume(item: ManualReview) {
+  try {
+    const response = await api.post(`/manual-review-queue/${item.id}/retry-resume/`)
+    if (response.data.resume_status === 'failed') error.value = '重試續傳仍然失敗，請確認採購需求資料或聯絡系統管理員。'
+    await load()
+  } catch (reason) { error.value = axios.isAxiosError(reason) ? (reason.response?.data?.detail ?? '重試續傳失敗') : '重試續傳失敗' }
 }
 
 onMounted(load)
@@ -50,7 +58,7 @@ onMounted(load)
       <header><div><small>複核案件 #{{ item.id }}</small><h2>{{ item.review_type === 'hallucination_mismatch' ? 'AI 摘要數字不一致' : '供應商名稱模糊' }}</h2></div><StatusBadge :status="item.status" /></header>
       <section v-if="item.review_type === 'hallucination_mismatch'" class="comparison"><div><strong>AI 生成內容</strong><p>{{ item.ai_generated_text }}</p></div><div><strong>原始真實值</strong><pre>{{ item.expected_value }}</pre></div></section>
       <section v-else class="comparison"><div><strong>使用者原文</strong><p>{{ item.raw_input_text }}</p></div><div><strong>系統候選</strong><p>{{ item.supplier_name || '需人工指定 supplier_id' }}</p></div></section>
-      <footer><span v-if="item.claimant_name">已由 {{ item.claimant_name }} 認領</span><button v-if="item.status === 'unclaimed'" class="primary-button" @click="claim(item)">認領案件</button><template v-if="item.status === 'claimed' && item.user === auth.user?.id"><button class="secondary-button danger" @click="decide(item, 'rejected')">駁回</button><button class="primary-button" @click="decide(item, 'approved')">核准</button></template></footer>
+      <footer><span v-if="item.claimant_name">已由 {{ item.claimant_name }} 認領</span><button v-if="item.status === 'unclaimed'" class="primary-button" @click="claim(item)">認領案件</button><template v-if="item.status === 'claimed' && item.user === auth.user?.id"><button class="secondary-button danger" @click="decide(item, 'rejected')">駁回</button><button class="primary-button" @click="decide(item, 'approved')">核准</button></template><button v-if="item.resume_status === 'failed'" class="secondary-button" @click="retryResume(item)">重試續傳</button></footer>
     </article>
   </div>
 </template>

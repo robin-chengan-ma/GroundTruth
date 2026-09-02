@@ -132,6 +132,7 @@ class Command(BaseCommand):
                 ("manual_review.decide", "決議人工複核案件"),
                 ("audit.read", "讀取稽核紀錄"),
                 ("purchase_suggestion.read", "讀取採購建議"),
+                ("purchase_suggestion.dismiss", "忽略採購建議"),
             ],
         }
         for user in users.values():
