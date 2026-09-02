@@ -113,6 +113,7 @@ updated: 2026-09-02
 | 2026-09-01 | e2f8296 | P5.0-B1／B2：需求分頁與唯讀詳情彈窗 | Codex／Robin |
 | 2026-09-01 | 1023006 | P5.0-B3A：停用舊版詢價與 Quote 建單命令 | Codex／Robin |
 | 2026-09-01 | 28619e8 | 新版簽核工作台、legacy 簽核命令退役與 Phase 5～7 Roadmap 收斂 | Codex／Robin |
+| 2026-09-02 | f506d07 | Phase 5：查詢契約補齊（FR-16）、purchase_suggestion.read 權限收斂、5 個 legacy 服務移除、前端 /quotes 更名為 /purchase-requests | Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
