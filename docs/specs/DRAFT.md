@@ -1,5 +1,5 @@
 ---
-updated: 2026-08-28
+updated: 2026-09-02
 ---
 
 # 未定案草稿
@@ -7,8 +7,6 @@ updated: 2026-08-28
 > 想法先記在這裡，使用者確認要做才依 SPEC-TEMPLATE.md 的功能區塊格式升級進 `docs/specs/SPEC.md`。
 
 ## 待討論
-
-- [ ] YYYY-MM-DD：<點子描述>
 
 ## 已取消
 

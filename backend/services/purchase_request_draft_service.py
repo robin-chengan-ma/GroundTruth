@@ -6,12 +6,22 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from uuid import uuid4
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, models, transaction
+from django.db.models import Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from apps.audit.models import AuditLog
 from apps.crm.models import Supplier
 from apps.erp.models import Product
-from apps.procurement.models import PurchaseRequest, PurchaseRequestItem, Rfq, RfqSupplier
+from apps.procurement.models import (
+    ApprovalCase,
+    AwardDecision,
+    PurchaseRequest,
+    PurchaseRequestItem,
+    Rfq,
+    RfqSupplier,
+)
 from repositories.procurement import PurchaseRequestRepository
 from services.rbac_service import user_has_permission
 
@@ -231,9 +241,17 @@ def list_owned_drafts(user):
     return PurchaseRequestRepository.owned_drafts(user.id)
 
 
-def list_owned_requests(user):
+def list_owned_requests(user, *, search=None, status=None):
     _require_permission(user, "purchase_request.read_own")
-    return PurchaseRequestRepository.owned(user.id)
+    normalized_search = str(search or "").strip()
+    normalized_status = str(status or "").strip()
+    if normalized_status and normalized_status not in PurchaseRequest.Status.values:
+        raise DraftError("status 不是有效的採購需求狀態")
+    return PurchaseRequestRepository.owned(
+        user.id,
+        search=normalized_search or None,
+        status=normalized_status or None,
+    )
 
 
 def get_owned_request(user, pk):
@@ -242,6 +260,66 @@ def get_owned_request(user, pk):
         return PurchaseRequestRepository.owned(user.id).get(pk=pk)
     except ObjectDoesNotExist as exc:
         raise DraftNotFound("找不到指定的採購需求") from exc
+
+
+@transaction.atomic
+def withdraw_request(user, pk, *, version, reason):
+    _require_permission(user, "purchase_request.withdraw")
+    normalized_reason = str(reason or "").strip()
+    if not normalized_reason:
+        raise DraftError("撤回原因為必填")
+    try:
+        request = PurchaseRequestRepository.get_owned(pk, user.id, for_update=True)
+    except ObjectDoesNotExist as exc:
+        raise DraftNotFound("找不到指定的採購需求") from exc
+    if version != request.version:
+        raise DraftVersionConflict("採購需求已被更新，請重新載入最新版本")
+    withdrawable = {
+        PurchaseRequest.Status.SUBMITTED,
+        PurchaseRequest.Status.SOURCING,
+        PurchaseRequest.Status.AWARDING,
+        PurchaseRequest.Status.APPROVAL,
+    }
+    if request.status not in withdrawable:
+        raise DraftVersionConflict("目前狀態不可撤回")
+
+    active_rfqs = request.rfqs.select_for_update().exclude(
+        status__in=[Rfq.Status.CLOSED, Rfq.Status.CANCELLED]
+    )
+    RfqSupplier.objects.filter(rfq__in=active_rfqs).exclude(
+        status=RfqSupplier.Status.CANCELLED
+    ).update(status=RfqSupplier.Status.CANCELLED)
+    active_rfqs.update(status=Rfq.Status.CANCELLED, version=models.F("version") + 1)
+
+    active_awards = AwardDecision.objects.select_for_update().filter(
+        rfq__request=request,
+        status__in=[AwardDecision.Status.DRAFT, AwardDecision.Status.SUBMITTED],
+    )
+    ApprovalCase.objects.select_for_update().filter(
+        award__in=active_awards,
+        status__in=[ApprovalCase.Status.PENDING, ApprovalCase.Status.IN_PROGRESS],
+    ).update(
+        status=ApprovalCase.Status.CANCELLED,
+        decided_at=timezone.now(),
+        version=models.F("version") + 1,
+    )
+    # award_decisions_submission_time_consistent：非 draft 狀態必須有 submitted_at；
+    # 仍在 draft 就被撤回連動取消的得標方案，一併補上取消當下時間，避免違反 CHECK constraint。
+    active_awards.update(
+        status=AwardDecision.Status.CANCELLED,
+        submitted_at=Coalesce(models.F("submitted_at"), Value(timezone.now())),
+    )
+
+    request.status = PurchaseRequest.Status.WITHDRAWN
+    request.version += 1
+    request.save(update_fields=["status", "version"])
+    AuditLog.objects.create(
+        user=user,
+        action_type="purchase_request_withdrawal",
+        real_query_summary=f"request_no={request.request_no}; reason={normalized_reason}",
+        verification_result="n/a",
+    )
+    return PurchaseRequestRepository.owned(user.id).get(pk=request.pk)
 
 
 @transaction.atomic

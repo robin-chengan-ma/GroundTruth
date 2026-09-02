@@ -17,6 +17,7 @@ from api.procurement.views import (
     QuoteViewSet,
     RfqViewSet,
     SupplierProductCoverageView,
+    SupplierProductViewSet,
     SupplierQuoteViewSet,
 )
 
@@ -31,6 +32,7 @@ router.register("purchase-requests", PurchaseRequestViewSet, basename="purchase-
 router.register("purchase-orders", PurchaseOrderViewSet, basename="purchase-order")
 router.register("rfqs", RfqViewSet, basename="rfq")
 router.register("supplier-quotes", SupplierQuoteViewSet, basename="supplier-quote")
+router.register("supplier-products", SupplierProductViewSet, basename="supplier-product")
 router.register(
     "quote-requirement-results",
     QuoteRequirementResultViewSet,

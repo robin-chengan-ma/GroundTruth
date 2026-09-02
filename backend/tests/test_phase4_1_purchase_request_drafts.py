@@ -25,6 +25,7 @@ def _grant_draft_permissions(user, role):
         "purchase_request.read_own",
         "purchase_request.edit_draft",
         "purchase_request.submit",
+        "purchase_request.withdraw",
     ):
         permission = Permission.objects.create(code=code, name=code)
         RolePermission.objects.create(role=role, permission=permission)
@@ -339,6 +340,86 @@ def test_purchase_request_detail_hides_other_users_document(
     response = api_client.get(f"/api/v1/purchase-requests/{other_request.id}/")
 
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_purchase_request_list_supports_search_and_status_filter(
+    api_client, user, role_employee, product, supplier,
+):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+    matching = PurchaseRequest.objects.create(
+        request_no="PR-SEARCH-001", requester=user, purpose="辦公設備汰換",
+        status=PurchaseRequest.Status.SUBMITTED,
+    )
+    PurchaseRequest.objects.create(
+        request_no="PR-SEARCH-002", requester=user, purpose="年度採購",
+        status=PurchaseRequest.Status.DRAFT,
+    )
+
+    response = api_client.get(
+        "/api/v1/purchase-requests/?search=設備&status=submitted&page=1&page_size=10"
+    )
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.data["results"]] == [matching.id]
+
+
+@pytest.mark.django_db
+def test_requester_withdraws_submitted_purchase_request_and_writes_audit_log(
+    api_client, user, role_employee,
+):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+    purchase_request = PurchaseRequest.objects.create(
+        request_no="PR-WITHDRAW-001", requester=user, purpose="撤回測試",
+        status=PurchaseRequest.Status.SUBMITTED,
+    )
+
+    response = api_client.post(
+        f"/api/v1/purchase-requests/{purchase_request.id}/withdraw/",
+        {"version": purchase_request.version, "reason": "需求內容需重新確認"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.data["status"] == PurchaseRequest.Status.WITHDRAWN
+    purchase_request.refresh_from_db()
+    assert purchase_request.status == PurchaseRequest.Status.WITHDRAWN
+    assert purchase_request.version == 2
+    from apps.audit.models import AuditLog
+    assert AuditLog.objects.filter(
+        user=user,
+        action_type="purchase_request_withdrawal",
+        real_query_summary__contains="PR-WITHDRAW-001",
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_purchase_request_withdraw_rejects_draft_and_version_conflict(
+    api_client, user, role_employee,
+):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+    draft = PurchaseRequest.objects.create(
+        request_no="PR-WITHDRAW-DRAFT", requester=user, purpose="草稿",
+    )
+    submitted = PurchaseRequest.objects.create(
+        request_no="PR-WITHDRAW-CONFLICT", requester=user, purpose="版本衝突",
+        status=PurchaseRequest.Status.SUBMITTED,
+    )
+
+    draft_response = api_client.post(
+        f"/api/v1/purchase-requests/{draft.id}/withdraw/",
+        {"version": draft.version, "reason": "不應允許"}, format="json",
+    )
+    conflict_response = api_client.post(
+        f"/api/v1/purchase-requests/{submitted.id}/withdraw/",
+        {"version": 99, "reason": "版本錯誤"}, format="json",
+    )
+
+    assert draft_response.status_code == 409
+    assert conflict_response.status_code == 409
 
 
 @pytest.mark.django_db

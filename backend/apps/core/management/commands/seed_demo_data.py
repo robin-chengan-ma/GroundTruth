@@ -80,6 +80,7 @@ class Command(BaseCommand):
                 ("purchase_request.withdraw", "撤回自己的採購需求"),
                 ("master_data.read", "讀取主檔"),
                 ("inventory.read", "讀取庫存"),
+                ("purchase_suggestion.read", "讀取採購建議"),
             ],
             "approver_10k": [
                 ("approval.claim", "認領簽核案件"),
@@ -124,10 +125,13 @@ class Command(BaseCommand):
             ],
             "admin": [
                 ("identity.manage", "管理帳號與角色"),
+                ("master_data.read", "讀取主檔"),
                 ("master_data.manage", "管理供應商與品項主檔"),
+                ("inventory.read", "讀取庫存"),
                 ("manual_review.claim", "認領人工複核案件"),
                 ("manual_review.decide", "決議人工複核案件"),
                 ("audit.read", "讀取稽核紀錄"),
+                ("purchase_suggestion.read", "讀取採購建議"),
             ],
         }
         for user in users.values():

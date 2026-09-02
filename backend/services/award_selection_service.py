@@ -236,3 +236,22 @@ def serialize_award(award):
             "reason": line.reason,
         } for line in lines],
     }
+
+
+def _require_read_permission(user):
+    """FR-16：得標方案查詢僅開放採購管理與稽核角色。"""
+    if not (user_has_permission(user, "award.recommend") or user_has_permission(user, "audit.read")):
+        raise AwardSelectionPermissionDenied("沒有讀取得標方案的權限")
+
+
+def list_accessible_awards(user):
+    _require_read_permission(user)
+    return AwardRepository.accessible()
+
+
+def get_accessible_award(user, pk):
+    _require_read_permission(user)
+    try:
+        return AwardRepository.accessible().get(pk=pk)
+    except ObjectDoesNotExist as exc:
+        raise AwardSelectionNotFound("找不到指定的得標方案") from exc

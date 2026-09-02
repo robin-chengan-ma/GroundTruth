@@ -35,14 +35,16 @@ rotation／撤銷狀態，不保存 Token 明文。
 | --- | --- | --- |
 | roles、users | admin | admin CRUD；密碼寫入時由後端雜湊 |
 | suppliers、products | 已登入使用者；n8n 可用內部 API Key 唯讀查詢 | 僅 admin 可用通用 CRUD 寫入；內部服務不可寫入 |
-| inventory | 已登入使用者 | 僅 admin 可用通用 CRUD 寫入 |
-| purchase-suggestions | 已登入使用者 | 通用 API 唯讀；具 `purchase_request.create` 可轉單，僅 admin 可忽略未轉單建議 |
+| inventory | 具 `inventory.read`（不可用 `master_data.read` 代替） | 唯讀端點（`ReadOnlyModelViewSet`），無通用寫入 |
+| purchase-suggestions | 具 `purchase_suggestion.read`（list／retrieve 專用；convert／dismiss 不套用此權限碼，各自的授權見下方 API 表） | 通用 API 唯讀；具 `purchase_request.create` 可轉單，僅 admin 可忽略未轉單建議 |
 | quotes | legacy 歷史查詢沿用既有本人／角色／admin 範圍 | 通用 API 唯讀；legacy 建單與驗證 command 已停用，撤回 action 待後續切換 |
 | approval-cases、approval-steps | `approval.read_all` 只見有效角色對應案件；`audit.read` 可唯讀全部 | 僅符合目標角色及 permission codes 者可認領／決議；決議理由必填，禁止申請人自簽與跨角色代簽 |
 | approvals | legacy 歷史查詢沿用既有角色／admin 範圍 | `claim`／`decide` 已停用並回 410；不再接受正式寫入 |
 | purchase-request-drafts | 具 `purchase_request.read_own` 者只見本人草稿 | create／edit_draft／submit 分別檢查對應 RBAC；只有 draft 可修改或刪除 |
 | purchase-requests | 具 `purchase_request.read_own` 者只見本人全部需求 | 唯讀清單；正式狀態異動必須使用各流程明確 action，不提供通用 CRUD |
-| rfqs、supplier-quotes | 具 `rfq.manage`／`supplier_quote.manage` 的採購人員 | RFQ 只能由明確 issue action 發出；報價只能建立草稿、提交或建立 revision，不提供通用更新／刪除 |
+| rfqs、supplier-quotes | 具 `rfq.manage`／`supplier_quote.manage` 或 `audit.read`（唯讀）；一般申請人不開放 | RFQ 只能由明確 issue action 發出；報價只能建立草稿、提交或建立 revision，不提供通用更新／刪除 |
+| award-decisions | 具 `award.recommend` 或 `audit.read`（唯讀） | 只能由明確 command 建立草稿、PATCH 草稿、submit；不提供通用刪除 |
+| supplier-products | 具 `master_data.read` | 僅 `master_data.manage` 可建立／更新／新增價格版本；不提供實體刪除，只能 `is_active` 停用 |
 | quote-requirement-results | 採購人員於報價提交後讀取評估結果 | 只有 `requirement.waive` 可對 fail／not_provided 填理由例外核准 |
 | goods-receipts | 申請人只見自己需求；`receipt.record`、`inspection.decide`、`audit.read` 可見全部 | 只有 `receipt.record` 可建立草稿與送驗；不開放通用更新／刪除 |
 | inspection-variances | `purchase_order.manage`、`receipt.record`、`inspection.decide`、`audit.read` 可唯讀全部 | 只有 `purchase_order.manage` 可建立、修改／刪除草稿與送出；正式案件不可以通用 CRUD 改寫 |
@@ -174,8 +176,8 @@ Quote、Supplier Quote、簽核或採購單。
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
-| `GET /api/v1/purchase-suggestions/` | 已登入 | 無；回傳品項、建議數量、狀態、來源 movement 與轉成的 request | 200 建議陣列 |
-| `GET /api/v1/purchase-suggestions/{id}/` | 已登入 | 通用資源唯讀 | 200 建議詳情 |
+| `GET /api/v1/purchase-suggestions/` | `purchase_suggestion.read` | 無；回傳品項、建議數量、狀態、來源 movement 與轉成的 request | 200；全域 `PageNumberPagination`，回傳 `{count,next,previous,results}` |
+| `GET /api/v1/purchase-suggestions/{id}/` | `purchase_suggestion.read` | 通用資源唯讀 | 200 建議詳情 |
 | `POST /api/v1/purchase-suggestions/{id}/convert/` | `purchase_request.create` | `supplier_ids` 為非空、不重複的有效供應商 ID；可傳 `purpose`、`needed_by`、`currency`；僅 pending 且尚未轉單可執行 | 201；建立本人 Purchase Request draft 並回傳 `purchase_request_id` |
 | `POST /api/v1/purchase-suggestions/{id}/dismiss/` | admin | 無；僅 pending 且尚未轉單可執行 | 200；狀態轉 dismissed |
 
@@ -187,6 +189,9 @@ Quote、Supplier Quote、簽核或採購單。
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
+| `GET /api/v1/rfqs/`／`GET /api/v1/rfqs/{id}/` | `rfq.manage` 或 `audit.read` | 無；一般申請人不開放，僅採購管理與稽核角色可查 | 200 依 `-created_at,-id` 排序的清單／詳情，含受邀供應商與評選標準快照 |
+| `GET /api/v1/supplier-quotes/`／`GET /api/v1/supplier-quotes/{id}/` | `supplier_quote.manage` 或 `audit.read` | 無 | 200 清單／詳情，含明細與必要條件判定結果 |
+| `GET /api/v1/award-decisions/`／`GET /api/v1/award-decisions/{id}/` | `award.recommend` 或 `audit.read` | 無 | 200 清單／詳情，含得標分配明細 |
 | `POST /api/v1/rfqs/{id}/issue/` | `rfq.manage` | `version`、未來的 ISO 8601 `response_due_at`；只允許 submitted Purchase Request 的 draft RFQ | 200；RFQ 轉 issued、需求轉 sourcing、RFQ version +1 |
 | `POST /api/v1/supplier-quotes/` | `supplier_quote.manage` | `rfq_supplier_id`、幣別、匯率及一至多筆報價明細；RFQ 必須仍在收件期限內 | 201 報價草稿 |
 | `POST /api/v1/supplier-quotes/{id}/submit/` | `supplier_quote.manage` | 無 Body；後端重新檢查 RFQ／報價期限並產生條件結果 | 200；報價轉 submitted、邀請轉 responded |
@@ -345,6 +350,26 @@ RFQ 發出時建立六項案件快照：實際總成本 30%、規格與品質 30
   ]
 }
 ```
+
+## 供應商可供應品項與版本化價格主檔 API
+
+全部端點使用 Bearer Access Token。主檔（供應商×品項關係）只能啟用／停用，不得實體刪除；價格採版本
+控制，新版本一律用新增，不得覆寫既有版本的價格內容。
+
+| Method / Route | 必要權限 | Request／規則 | 成功回應 |
+| --- | --- | --- | --- |
+| `GET /api/v1/supplier-products/` | `master_data.read` | 無 | 200 依供應商／品項名稱排序的清單，含各筆 `price_versions` |
+| `GET /api/v1/supplier-products/{id}/` | `master_data.read` | 無 | 200 詳情 |
+| `POST /api/v1/supplier-products/` | `master_data.manage` | `supplier`、`product`（皆須為現行啟用中）；可選 `supplier_sku`、`lead_time_days`（預設 0）、`minimum_order_quantity`（預設 1）、`quality_status`（`qualified`／`conditional`／`blocked`，預設 `qualified`） | 201；同一供應商＋品項已存在關係回 409 |
+| `PATCH /api/v1/supplier-products/{id}/` | `master_data.manage` | 可局部更新 `supplier_sku`、`lead_time_days`、`minimum_order_quantity`、`quality_status`、`is_active` | 200 |
+| `DELETE /api/v1/supplier-products/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，請改用 PATCH `is_active=false` |
+| `POST /api/v1/supplier-products/{id}/price-versions/` | `master_data.manage` | `unit_price`（必須 >0）、`currency`（預設 `TWD`）、`minimum_quantity`（必須 >0，預設 1）、`valid_from`（ISO 8601，預設現在）、可選 `valid_until` | 201；回傳更新後的主檔（含新版本）；同幣別／數量級距若已有時間重疊的有效版本回 409 |
+
+新增價格版本前，後端會檢查同一供應商品項、同幣別、同 `minimum_quantity` 級距是否已有時間重疊
+（`valid_until` 為 `NULL` 視為無限期有效）的既有版本，避免同一時間點出現兩個有效單價；需要調整既有
+價格時，先把舊版本的 `valid_until` 設為新版本的 `valid_from`（透過另一次新增動作或後續版本管理
+API，目前尚未提供修改既有版本 `valid_until` 的獨立 command，屬 Phase 6 前端頁面待補的操作流程）。
+無權限回 403 `permission_denied`，資源不存在回 404 `not_found`，格式或數值錯誤回 400。
 
 ### GET `/api/v1/approval-cases/`
 

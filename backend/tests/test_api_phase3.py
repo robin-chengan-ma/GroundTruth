@@ -1,9 +1,10 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
 from apps.audit.models import ManualReviewQueue
-from apps.core.models import User
+from apps.core.models import Permission, RolePermission, User, UserRole
 from apps.procurement.models import Quote
 from services.authentication_service import issue_token_pair
 
@@ -80,24 +81,25 @@ def test_verify_hallucination_requires_internal_api_key(api_client, verify_quote
 
 @pytest.fixture
 def review_admin(db, role_admin):
-    return User.objects.create(
+    user = User.objects.create(
         name="Review Admin", email="review.admin@groundtruth.demo",
         password="x", role=role_admin,
     )
+    UserRole.objects.create(user=user, role=role_admin)
+    for code in ("manual_review.claim", "manual_review.decide"):
+        permission, _ = Permission.objects.get_or_create(code=code, defaults={"name": code})
+        RolePermission.objects.create(role=role_admin, permission=permission)
+    return user
 
 
 @pytest.fixture
 def review_for_claim(db, verify_quote):
-    verify_quote.status = Quote.Status.PENDING_REVIEW
-    verify_quote.save(update_fields=["status"])
     return ManualReviewQueue.objects.create(
-        quote=verify_quote,
-        review_type=ManualReviewQueue.ReviewType.HALLUCINATION_MISMATCH,
-        ai_generated_text="x",
-        expected_value=(
-            '{"quantity": "20", "unit_price": "1500.00", "total_amount": "30000.00", '
-            f'"supplier_name": "{verify_quote.supplier.name}", "product_name": "{verify_quote.product.name}"}}'
-        ),
+        quote=None,
+        review_type=ManualReviewQueue.ReviewType.SUPPLIER_FUZZY_MATCH,
+        raw_input_text="跟測試供應商採購測試產品",
+        supplier=verify_quote.supplier,
+        requester=verify_quote.user,
     )
 
 
@@ -142,21 +144,23 @@ def test_decide_action_missing_fields(api_client, review_for_claim, review_admin
 
 
 @pytest.mark.django_db
-def test_decide_action_approved_advances_quote(api_client, review_for_claim, review_admin, verify_quote):
+@patch("services.manual_review_service.trigger_resume")
+def test_decide_action_approved_resumes_candidate_parse(
+    trigger_resume, api_client, review_for_claim, review_admin, verify_quote,
+):
     authorization = bearer(review_admin)
     api_client.post(
         f"/api/v1/manual-review-queue/{review_for_claim.id}/claim/", HTTP_AUTHORIZATION=authorization
     )
     resp = api_client.post(
         f"/api/v1/manual-review-queue/{review_for_claim.id}/decide/",
-        {"decision": "approved"},
+        {"decision": "approved", "supplier_id": verify_quote.supplier_id},
         HTTP_AUTHORIZATION=authorization,
     )
     assert resp.status_code == 200
     assert resp.data["status"] == "resolved"
 
-    verify_quote.refresh_from_db()
-    assert verify_quote.status == Quote.Status.PENDING_APPROVAL
+    trigger_resume.assert_called_once()
 
 
 @pytest.mark.django_db

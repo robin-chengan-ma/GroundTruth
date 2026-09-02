@@ -10,17 +10,13 @@
     不能跳過解析直接查詢報價（見 docs/ADR/discuss/main-flow.md）。
 - 每個決定都寫入稽核 log（FR-6c）。
 """
-import json
-
 from django.db import transaction
 
 from apps.audit.models import AuditLog, ManualReviewQueue
 from apps.core.models import User
-from apps.procurement.models import Quote
 from repositories.core import UserRepository
-from services.approval_routing_service import route_quote
 from services.inquiry_resume_service import InquiryResumeError, trigger_resume
-from services.quote_summary_template import render_summary
+from services.rbac_service import user_has_permission
 
 
 class ManualReviewError(Exception):
@@ -31,9 +27,14 @@ class ManualReviewConflictError(ManualReviewError):
     """案件已被認領、已結案，或非本人認領時拋出（對應 API 409）。"""
 
 
+class LegacyManualReviewRetiredError(ManualReviewError):
+    """歷史複核案件僅供查閱，不得再推進 legacy Quote。"""
+
+
 def claim_review(review_id, user_id) -> ManualReviewQueue:
     review = _get_review(review_id)
-    user = _get_admin_user(user_id)
+    _ensure_active_review(review)
+    user = _get_authorized_user(user_id, "manual_review.claim")
 
     if review.status != ManualReviewQueue.Status.UNCLAIMED:
         raise ManualReviewConflictError("此案件已被認領或已結案")
@@ -49,7 +50,8 @@ def decide_review(review_id, user_id, decision, supplier_id=None) -> ManualRevie
         raise ManualReviewError("decision 必須是 approved 或 rejected")
 
     review = _get_review(review_id)
-    user = _get_admin_user(user_id)  # 驗證使用者存在且為管理員角色
+    _ensure_active_review(review)
+    user = _get_authorized_user(user_id, "manual_review.decide")
 
     if review.status != ManualReviewQueue.Status.CLAIMED:
         raise ManualReviewConflictError("此案件尚未認領或已結案，無法決議")
@@ -59,10 +61,7 @@ def decide_review(review_id, user_id, decision, supplier_id=None) -> ManualRevie
         raise ManualReviewConflictError("只有認領此案件的使用者可以決議")
 
     with transaction.atomic():
-        if review.review_type == ManualReviewQueue.ReviewType.HALLUCINATION_MISMATCH:
-            _decide_hallucination(review, decision)
-        else:
-            _decide_supplier_fuzzy_match(review, decision, supplier_id)
+        _decide_supplier_fuzzy_match(review, decision, supplier_id)
 
         review.status = ManualReviewQueue.Status.RESOLVED
         review.decision = decision
@@ -96,29 +95,6 @@ def decide_review(review_id, user_id, decision, supplier_id=None) -> ManualRevie
     return review
 
 
-def _decide_hallucination(review: ManualReviewQueue, decision: str) -> None:
-    quote = review.quote
-    if quote is None:
-        raise ManualReviewError("幻覺案件缺少對應的 Quote，資料異常")
-
-    if decision == ManualReviewQueue.Decision.APPROVED:
-        expected = json.loads(review.expected_value or "{}")
-        quote.ai_summary_text = render_summary(
-            supplier_name=expected.get("supplier_name", ""),
-            product_name=expected.get("product_name", ""),
-            quantity=expected.get("quantity", ""),
-            unit_price=expected.get("unit_price", ""),
-            total_amount=expected.get("total_amount", ""),
-            currency=quote.currency,
-        )
-        quote.status = Quote.Status.PENDING_APPROVAL
-    else:
-        quote.status = Quote.Status.CANCELLED
-    quote.save()
-    if decision == ManualReviewQueue.Decision.APPROVED:
-        route_quote(quote)
-
-
 def _decide_supplier_fuzzy_match(review: ManualReviewQueue, decision: str, supplier_id) -> None:
     if decision != ManualReviewQueue.Decision.APPROVED:
         return  # 駁回：不需要異動供應商欄位，通知申請人重新送出由 n8n／Gmail 串接負責。
@@ -140,14 +116,19 @@ def _get_review(review_id) -> ManualReviewQueue:
         raise ManualReviewError("找不到指定的複核案件") from exc
 
 
-def _get_admin_user(user_id) -> User:
-    """FR-6a：待人工複核佇列一律指派給管理員角色處理。"""
+def _ensure_active_review(review: ManualReviewQueue) -> None:
+    if review.review_type == ManualReviewQueue.ReviewType.HALLUCINATION_MISMATCH:
+        raise LegacyManualReviewRetiredError("舊版幻覺複核案件僅供歷史查閱")
+
+
+def _get_authorized_user(user_id, permission_code) -> User:
+    """FR-6a：依權限能力授權，不以 admin 角色名稱推測業務權限。"""
     try:
         user = UserRepository.get(user_id)
     except User.DoesNotExist as exc:
         raise ManualReviewError("找不到指定的使用者") from exc
 
-    if user.role.role != "admin":
-        raise ManualReviewError("只有管理員角色可以處理複核佇列案件")
+    if not user_has_permission(user, permission_code):
+        raise ManualReviewError("沒有處理人工複核案件的權限")
 
     return user

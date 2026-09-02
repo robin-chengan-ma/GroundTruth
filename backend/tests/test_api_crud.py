@@ -1,6 +1,9 @@
 """管理型資源 CRUD 與正式流程資源唯讀限制驗收。"""
 import pytest
 
+from apps.crm.models import Supplier
+from apps.erp.models import Inventory
+
 
 @pytest.mark.django_db
 def test_role_crud(admin_api_client):
@@ -40,7 +43,9 @@ def test_supplier_crud(admin_api_client):
     assert resp.data["tier"] == "watch"
 
     resp = admin_api_client.delete(f"/api/v1/suppliers/{supplier_id}/")
-    assert resp.status_code == 204
+    assert resp.status_code == 409
+    assert resp.data["code"] == "physical_delete_forbidden"
+    assert Supplier.objects.filter(pk=supplier_id).exists()
 
 
 @pytest.mark.django_db
@@ -64,13 +69,18 @@ def test_product_and_inventory_crud(admin_api_client):
     assert resp.status_code == 201
     product_id = resp.data["id"]
 
-    resp = admin_api_client.post("/api/v1/inventory/", {"product": product_id, "stock_qty": 3, "threshold": 10})
-    assert resp.status_code == 201
-    inv_id = resp.data["id"]
+    inventory = Inventory.objects.create(product_id=product_id, stock_qty=3, threshold=10)
 
-    resp = admin_api_client.get(f"/api/v1/inventory/{inv_id}/")
+    resp = admin_api_client.post("/api/v1/inventory/", {"product": product_id, "stock_qty": 3, "threshold": 10})
+    assert resp.status_code == 405
+
+    resp = admin_api_client.get(f"/api/v1/inventory/{inventory.id}/")
     assert resp.status_code == 200
     assert resp.data["stock_qty"] == 3
+
+    resp = admin_api_client.delete(f"/api/v1/products/{product_id}/")
+    assert resp.status_code == 409
+    assert resp.data["code"] == "physical_delete_forbidden"
 
 
 @pytest.mark.django_db

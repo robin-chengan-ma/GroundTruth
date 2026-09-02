@@ -181,11 +181,22 @@ def _locked_step(step_id):
         raise ApprovalWorkflowNotFound("找不到指定的簽核關卡") from exc
 
 
+_ACTIVE_CASE_STATUSES = {ApprovalCase.Status.PENDING, ApprovalCase.Status.IN_PROGRESS}
+
+
+def _ensure_case_active(case):
+    """需求撤回會連動將案件轉為 cancelled；案件一旦離開 pending／in_progress 就不得再認領或決議。"""
+    if case.status not in _ACTIVE_CASE_STATUSES:
+        raise ApprovalWorkflowConflict("此簽核案件已結案或已因需求撤回而取消")
+
+
 @transaction.atomic
 def claim_step(user, step_id):
     _require_action_permissions(user, "approval.claim", "approval.decide")
     step = _locked_step(step_id)
     _ensure_actor_allowed(step, user)
+    case = ApprovalCase.objects.select_for_update().get(pk=step.approval_case_id)
+    _ensure_case_active(case)
     if step.status != ApprovalStep.Status.PENDING:
         raise ApprovalWorkflowConflict("此關卡已被認領或已結案")
     if step.approval_case.steps.filter(sequence__lt=step.sequence).exclude(
@@ -197,7 +208,6 @@ def claim_step(user, step_id):
     step.claimed_by = user
     step.claimed_at = now
     step.save(update_fields=["status", "claimed_by", "claimed_at", "updated_at"])
-    case = ApprovalCase.objects.select_for_update().get(pk=step.approval_case_id)
     if case.status == ApprovalCase.Status.PENDING:
         case.status = ApprovalCase.Status.IN_PROGRESS
         case.version += 1
@@ -216,11 +226,12 @@ def decide_step(user, step_id, decision, reason):
         raise ApprovalWorkflowError("簽核決議必須填寫理由")
     step = _locked_step(step_id)
     _ensure_actor_allowed(step, user)
-    if step.status != ApprovalStep.Status.CLAIMED or step.claimed_by_id != user.id:
-        raise ApprovalWorkflowConflict("只有認領此關卡的使用者可以決議")
     case = ApprovalCase.objects.select_for_update().select_related(
         "award__rfq__request"
     ).get(pk=step.approval_case_id)
+    _ensure_case_active(case)
+    if step.status != ApprovalStep.Status.CLAIMED or step.claimed_by_id != user.id:
+        raise ApprovalWorkflowConflict("只有認領此關卡的使用者可以決議")
     now = timezone.now()
     step.status = decision
     step.decided_by = user

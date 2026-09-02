@@ -204,7 +204,7 @@ onBeforeUnmount(() => {
 
 <template>
   <PageHeader eyebrow="採購流程" title="新增採購需求" description="先解析、再人工確認；試算不等於正式送出。" />
-  <div v-if="successToast" class="success-toast" role="status"><span>{{ successToast }}</span><a href="/quotes">查看申請</a><button type="button" aria-label="關閉成功提示" @click="dismissSuccess">×</button></div>
+  <div v-if="successToast" class="success-toast" role="status"><span>{{ successToast }}</span><a href="/purchase-requests">查看申請</a><button type="button" aria-label="關閉成功提示" @click="dismissSuccess">×</button></div>
   <section class="surface inquiry-card inquiry-workspace">
     <div>
       <h2>用一句話描述需求</h2>

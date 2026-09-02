@@ -20,7 +20,7 @@ export const navigationGroups: NavigationGroup[] = [
       },
       {
         label: '我的採購需求',
-        to: '/quotes',
+        to: '/purchase-requests',
         permissions: ['purchase_request.read_own'],
       },
     ],

@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.audit.models import AuditLog, ManualReviewQueue
-from apps.core.models import User
+from apps.audit.models import ManualReviewQueue
+from apps.core.models import Permission, RolePermission, User, UserRole
 from apps.crm.models import Supplier
 from apps.procurement.models import Quote
 from services import manual_review_service as svc
@@ -13,12 +13,17 @@ from services.inquiry_resume_service import InquiryResumeError
 
 @pytest.fixture
 def admin_user(db, role_admin):
-    return User.objects.create(
+    user = User.objects.create(
         name="Admin User",
         email="admin.user@groundtruth.demo",
         password="hashed-not-tested-here",
         role=role_admin,
     )
+    UserRole.objects.create(user=user, role=role_admin)
+    for code in ("manual_review.claim", "manual_review.decide"):
+        permission, _ = Permission.objects.get_or_create(code=code, defaults={"name": code})
+        RolePermission.objects.create(role=role_admin, permission=permission)
+    return user
 
 
 @pytest.fixture
@@ -65,8 +70,8 @@ def fuzzy_review(db, supplier):
 
 # ---- claim ----
 
-def test_claim_review_success(hallucination_review, admin_user):
-    review = svc.claim_review(hallucination_review.id, admin_user.id)
+def test_claim_review_success(fuzzy_review, admin_user):
+    review = svc.claim_review(fuzzy_review.id, admin_user.id)
     assert review.status == ManualReviewQueue.Status.CLAIMED
     assert review.user_id == admin_user.id
 
@@ -76,70 +81,60 @@ def test_claim_review_not_found(admin_user):
         svc.claim_review(99999, admin_user.id)
 
 
-def test_claim_review_user_not_found(hallucination_review):
+def test_claim_review_user_not_found(fuzzy_review):
     with pytest.raises(svc.ManualReviewError):
-        svc.claim_review(hallucination_review.id, 99999)
+        svc.claim_review(fuzzy_review.id, 99999)
 
 
-def test_claim_review_non_admin_rejected(hallucination_review, employee_user):
+def test_claim_review_non_admin_rejected(fuzzy_review, employee_user):
     with pytest.raises(svc.ManualReviewError):
-        svc.claim_review(hallucination_review.id, employee_user.id)
+        svc.claim_review(fuzzy_review.id, employee_user.id)
 
 
-def test_claim_review_already_claimed_conflicts(hallucination_review, admin_user):
-    svc.claim_review(hallucination_review.id, admin_user.id)
+def test_claim_review_already_claimed_conflicts(fuzzy_review, admin_user):
+    svc.claim_review(fuzzy_review.id, admin_user.id)
     with pytest.raises(svc.ManualReviewConflictError):
-        svc.claim_review(hallucination_review.id, admin_user.id)
+        svc.claim_review(fuzzy_review.id, admin_user.id)
 
 
 # ---- decide：共通驗證 ----
 
-def test_decide_review_invalid_decision_value(hallucination_review, admin_user):
-    svc.claim_review(hallucination_review.id, admin_user.id)
+def test_decide_review_invalid_decision_value(fuzzy_review, admin_user):
+    svc.claim_review(fuzzy_review.id, admin_user.id)
     with pytest.raises(svc.ManualReviewError):
-        svc.decide_review(hallucination_review.id, admin_user.id, "maybe")
+        svc.decide_review(fuzzy_review.id, admin_user.id, "maybe")
 
 
-def test_decide_review_not_claimed_conflicts(hallucination_review, admin_user):
+def test_decide_review_not_claimed_conflicts(fuzzy_review, admin_user):
     with pytest.raises(svc.ManualReviewConflictError):
-        svc.decide_review(hallucination_review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED)
+        svc.decide_review(fuzzy_review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED)
 
 
-def test_decide_review_wrong_user_conflicts(hallucination_review, admin_user, db, role_admin):
-    svc.claim_review(hallucination_review.id, admin_user.id)
+def test_decide_review_wrong_user_conflicts(fuzzy_review, admin_user, db, role_admin):
+    svc.claim_review(fuzzy_review.id, admin_user.id)
     other_admin = User.objects.create(
         name="Other Admin", email="other.admin@groundtruth.demo",
         password="x", role=role_admin,
     )
+    UserRole.objects.create(user=other_admin, role=role_admin)
     with pytest.raises(svc.ManualReviewConflictError):
-        svc.decide_review(hallucination_review.id, other_admin.id, ManualReviewQueue.Decision.APPROVED)
+        svc.decide_review(fuzzy_review.id, other_admin.id, ManualReviewQueue.Decision.APPROVED)
 
 
 # ---- decide：hallucination_mismatch ----
 
-def test_decide_hallucination_approved_uses_system_template(hallucination_review, hallucination_quote, admin_user):
-    svc.claim_review(hallucination_review.id, admin_user.id)
-    review = svc.decide_review(
-        hallucination_review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED,
-    )
-
-    assert review.status == ManualReviewQueue.Status.RESOLVED
-    assert review.decision == ManualReviewQueue.Decision.APPROVED
-
+def test_decide_hallucination_approved_is_retired(hallucination_review, hallucination_quote, admin_user):
+    with pytest.raises(svc.LegacyManualReviewRetiredError):
+        svc.claim_review(hallucination_review.id, admin_user.id)
     hallucination_quote.refresh_from_db()
-    assert hallucination_quote.status == Quote.Status.PENDING_APPROVAL
-    assert "系統核定摘要" in hallucination_quote.ai_summary_text
-    assert "測試供應商" in hallucination_quote.ai_summary_text
-
-    assert AuditLog.objects.filter(quote=hallucination_quote, action_type="review_decision").exists()
+    assert hallucination_quote.status == Quote.Status.PENDING_REVIEW
 
 
-def test_decide_hallucination_rejected_cancels_quote(hallucination_review, hallucination_quote, admin_user):
-    svc.claim_review(hallucination_review.id, admin_user.id)
-    svc.decide_review(hallucination_review.id, admin_user.id, ManualReviewQueue.Decision.REJECTED)
-
+def test_decide_hallucination_rejected_is_retired(hallucination_review, hallucination_quote, admin_user):
+    with pytest.raises(svc.LegacyManualReviewRetiredError):
+        svc.claim_review(hallucination_review.id, admin_user.id)
     hallucination_quote.refresh_from_db()
-    assert hallucination_quote.status == Quote.Status.CANCELLED
+    assert hallucination_quote.status == Quote.Status.PENDING_REVIEW
 
 
 def test_decide_hallucination_missing_quote_raises(db, admin_user):
@@ -149,9 +144,8 @@ def test_decide_hallucination_missing_quote_raises(db, admin_user):
         ai_generated_text="x",
         expected_value="{}",
     )
-    svc.claim_review(review.id, admin_user.id)
-    with pytest.raises(svc.ManualReviewError):
-        svc.decide_review(review.id, admin_user.id, ManualReviewQueue.Decision.APPROVED)
+    with pytest.raises(svc.LegacyManualReviewRetiredError):
+        svc.claim_review(review.id, admin_user.id)
 
 
 # ---- decide：supplier_fuzzy_match ----

@@ -173,13 +173,22 @@ class PurchaseRequestRepository:
         return Product.objects.filter(id__in=ids, is_active=True)
 
     @staticmethod
-    def owned(user_id):
-        return (
+    def owned(user_id, *, search=None, status=None):
+        queryset = (
             PurchaseRequest.objects.filter(requester_id=user_id)
             .select_related("requester")
             .prefetch_related("items__product", "rfqs__invited_suppliers__supplier")
-            .order_by("-created_at", "-id")
         )
+        if search:
+            queryset = queryset.filter(
+                Q(request_no__icontains=search)
+                | Q(purpose__icontains=search)
+                | Q(items__product__name__icontains=search)
+                | Q(rfqs__invited_suppliers__supplier__name__icontains=search)
+            )
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.distinct().order_by("-created_at", "-id")
 
     @staticmethod
     def owned_drafts(user_id):
@@ -249,7 +258,41 @@ class PurchaseRequestRepository:
         ).aggregate(value=Avg("unit_price"))["value"]
 
 
+class SupplierProductRepository:
+    @staticmethod
+    def all():
+        return (
+            SupplierProduct.objects.select_related("supplier", "product")
+            .prefetch_related("price_versions")
+            .order_by("supplier__name", "product__name", "id")
+        )
+
+    @staticmethod
+    def get(pk):
+        return SupplierProductRepository.all().get(pk=pk)
+
+    @staticmethod
+    def overlapping_price_versions(*, supplier_product_id, currency, minimum_quantity, valid_from, valid_until):
+        """新增價格版本前檢查同商品／幣別／數量級距是否已有時間重疊的版本，避免同一時間點出現兩個有效單價。"""
+        queryset = SupplierPriceVersion.objects.filter(
+            supplier_product_id=supplier_product_id,
+            currency=currency,
+            minimum_quantity=minimum_quantity,
+        ).filter(Q(valid_until__isnull=True) | Q(valid_until__gt=valid_from))
+        if valid_until is not None:
+            queryset = queryset.filter(valid_from__lt=valid_until)
+        return queryset
+
+
 class RfqRepository:
+    @staticmethod
+    def accessible():
+        return (
+            Rfq.objects.select_related("request")
+            .prefetch_related("invited_suppliers", "scoring_criteria")
+            .order_by("-created_at", "-id")
+        )
+
     @staticmethod
     def get_for_update(pk):
         return (
@@ -277,6 +320,14 @@ class RfqRepository:
 
 class SupplierQuoteRepository:
     @staticmethod
+    def accessible():
+        return (
+            SupplierQuote.objects.select_related("rfq_supplier__rfq__request", "rfq_supplier__supplier")
+            .prefetch_related("items__request_item", "items__requirement_results__requirement")
+            .order_by("-created_at", "-id")
+        )
+
+    @staticmethod
     def invitation_for_update(pk):
         return (
             RfqSupplier.objects.select_for_update()
@@ -303,6 +354,17 @@ class SupplierQuoteRepository:
 
 
 class AwardRepository:
+    @staticmethod
+    def accessible():
+        return (
+            AwardDecision.objects.select_related("selected_by", "rfq__request")
+            .prefetch_related(
+                "lines__request_item",
+                "lines__supplier_quote_item__supplier_quote__rfq_supplier__supplier",
+            )
+            .order_by("-created_at", "-id")
+        )
+
     @staticmethod
     def rfq_for_award(pk):
         return (

@@ -354,7 +354,13 @@ RED（寫失敗的測試）
 - 覆蓋率要求維持預設：80%+／認證與安全相關邏輯 100%，具體涵蓋：
   - `backend/lib/` 下的 JWT 驗證、內部 API Key 驗證邏輯
   - `backend/services/masking_service.py`（遮罩／供應商比對）
-  - `backend/services/hallucination_check_service.py`（幻覺驗證比對）
-  - `backend/services/approval_routing_service.py`（簽核路由）
+  - `backend/services/approval_case_service.py`（簽核案件建立、關卡認領／決議與撤回後狀態防線）
+  - `backend/services/rfq_quote_service.py`、`backend/services/award_selection_service.py`（RFQ／供應商報價／得標決議的讀取權限與狀態機）
+
+  > 2026-09-01：`hallucination_check_service.py`、`approval_routing_service.py`（連同
+  > `approval_service.py`／`quote_calculation_service.py`／`quote_summary_template.py`）已確認
+  > 無生產程式碼引用並移除，legacy 幻覺驗證與簽核路由邏輯已完全由新核心
+  > （n8n／Gemini 幻覺驗證分流＋`approval_case_service.py`）取代，見
+  > `docs/ADR/debug/phase5-security.md` 對應紀錄。
 - 敏感資料處理：`.env`、密碼雜湊、JWT token、內部 API Key 一律不得 log 明文，錯誤訊息不得洩漏含 token 的完整內容
 - 額外的 coding convention：<專案特有規範>

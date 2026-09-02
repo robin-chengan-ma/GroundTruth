@@ -16,6 +16,7 @@ from schemas.procurement import (
     QuoteRequirementResultSerializer,
     QuoteSerializer,
     RfqSerializer,
+    SupplierProductSerializer,
     SupplierQuoteSerializer,
 )
 from services.approval_case_service import (
@@ -30,13 +31,14 @@ from services.approval_case_service import (
     serialize_case,
     serialize_step,
 )
-from services.approval_service import ApprovalConflictError, ApprovalError, withdraw_quote
 from services.award_selection_service import (
     AwardSelectionConflict,
     AwardSelectionError,
     AwardSelectionNotFound,
     AwardSelectionPermissionDenied,
     create_award_draft,
+    get_accessible_award,
+    list_accessible_awards,
     serialize_award,
     submit_award,
     update_award_draft,
@@ -71,6 +73,7 @@ from services.purchase_request_draft_service import (
     preview_draft,
     submit_draft,
     update_draft,
+    withdraw_request,
 )
 from services.rbac_service import user_has_permission
 from services.rfq_evaluation_service import evaluate_rfq
@@ -79,7 +82,11 @@ from services.rfq_quote_service import (
     RfqQuoteError,
     RfqQuoteNotFound,
     RfqQuotePermissionDenied,
+    get_accessible_quote,
+    get_accessible_rfq,
     issue_rfq,
+    list_accessible_quotes,
+    list_accessible_rfqs,
     revise_quote,
     submit_quote,
     waive_requirement,
@@ -90,6 +97,17 @@ from services.rfq_quote_service import (
 from services.supplier_product_coverage_service import (
     SupplierProductCoverageError,
     build_supplier_product_coverage,
+)
+from services.supplier_product_service import (
+    SupplierProductConflict,
+    SupplierProductError,
+    SupplierProductNotFound,
+    SupplierProductPermissionDenied,
+    add_price_version,
+    create_supplier_product,
+    get_supplier_product,
+    list_supplier_products,
+    update_supplier_product,
 )
 
 
@@ -130,6 +148,20 @@ class AwardDecisionViewSet(viewsets.ViewSet):
         else:
             response_status = status.HTTP_400_BAD_REQUEST
         return Response({"detail": str(exc), "code": exc.code}, status=response_status)
+
+    def list(self, request):
+        try:
+            awards = list_accessible_awards(request.user)
+        except AwardSelectionError as exc:
+            return self._error_response(exc)
+        return Response([serialize_award(award) for award in awards])
+
+    def retrieve(self, request, pk=None):
+        try:
+            award = get_accessible_award(request.user, pk)
+        except AwardSelectionError as exc:
+            return self._error_response(exc)
+        return Response(serialize_award(award))
 
     def create(self, request):
         try:
@@ -253,6 +285,20 @@ class RfqViewSet(RfqQuoteErrorMixin, viewsets.ViewSet):
     authentication_classes = [BusinessJwtAuthentication]
     permission_classes = [permissions.IsAuthenticated]
 
+    def list(self, request):
+        try:
+            rfqs = list_accessible_rfqs(request.user)
+        except RfqQuoteError as exc:
+            return self._rfq_error_response(exc)
+        return Response(RfqSerializer(rfqs, many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            rfq = get_accessible_rfq(request.user, pk)
+        except RfqQuoteError as exc:
+            return self._rfq_error_response(exc)
+        return Response(RfqSerializer(rfq).data)
+
     @action(detail=True, methods=["post"])
     def issue(self, request, pk=None):
         try:
@@ -273,6 +319,20 @@ class RfqViewSet(RfqQuoteErrorMixin, viewsets.ViewSet):
 class SupplierQuoteViewSet(RfqQuoteErrorMixin, viewsets.ViewSet):
     authentication_classes = [BusinessJwtAuthentication]
     permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request):
+        try:
+            quotes = list_accessible_quotes(request.user)
+        except RfqQuoteError as exc:
+            return self._rfq_error_response(exc)
+        return Response(SupplierQuoteSerializer(quotes, many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            quote = get_accessible_quote(request.user, pk)
+        except RfqQuoteError as exc:
+            return self._rfq_error_response(exc)
+        return Response(SupplierQuoteSerializer(quote).data)
 
     def create(self, request):
         try:
@@ -309,6 +369,69 @@ class QuoteRequirementResultViewSet(RfqQuoteErrorMixin, viewsets.ViewSet):
         except RfqQuoteError as exc:
             return self._rfq_error_response(exc)
         return Response(QuoteRequirementResultSerializer(result).data)
+
+
+class SupplierProductViewSet(viewsets.ViewSet):
+    """FR-2／FR-16：供應商可供應品項與版本化價格主檔。"""
+
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _error_response(self, exc):
+        if isinstance(exc, SupplierProductNotFound):
+            response_status = status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, SupplierProductPermissionDenied):
+            response_status = status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, SupplierProductConflict):
+            response_status = status.HTTP_409_CONFLICT
+        else:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response({"detail": str(exc), "code": exc.code}, status=response_status)
+
+    def list(self, request):
+        try:
+            items = list_supplier_products(request.user)
+        except SupplierProductError as exc:
+            return self._error_response(exc)
+        return Response(SupplierProductSerializer(items, many=True).data)
+
+    def retrieve(self, request, pk=None):
+        try:
+            item = get_supplier_product(request.user, pk)
+        except SupplierProductError as exc:
+            return self._error_response(exc)
+        return Response(SupplierProductSerializer(item).data)
+
+    def create(self, request):
+        try:
+            item = create_supplier_product(request.user, request.data)
+        except SupplierProductError as exc:
+            return self._error_response(exc)
+        return Response(SupplierProductSerializer(item).data, status=status.HTTP_201_CREATED)
+
+    def partial_update(self, request, pk=None):
+        try:
+            item = update_supplier_product(request.user, pk, request.data)
+        except SupplierProductError as exc:
+            return self._error_response(exc)
+        return Response(SupplierProductSerializer(item).data)
+
+    def destroy(self, request, pk=None):
+        return Response(
+            {
+                "detail": "供應商品項關係不得實體刪除，請改為停用",
+                "code": "physical_delete_forbidden",
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    @action(detail=True, methods=["post"], url_path="price-versions")
+    def price_versions(self, request, pk=None):
+        try:
+            item = add_price_version(request.user, pk, request.data)
+        except SupplierProductError as exc:
+            return self._error_response(exc)
+        return Response(SupplierProductSerializer(item).data, status=status.HTTP_201_CREATED)
 
 
 class PurchaseRequestDraftViewSet(viewsets.ViewSet):
@@ -416,7 +539,11 @@ class PurchaseRequestViewSet(viewsets.ViewSet):
         if page_size not in self.page_sizes:
             return self._pagination_error("page_size 只允許 10、20 或 50")
         try:
-            requests = list_owned_requests(request.user)
+            requests = list_owned_requests(
+                request.user,
+                search=request.query_params.get("search"),
+                status=request.query_params.get("status"),
+            )
         except DraftError as exc:
             return Response(
                 {"detail": str(exc), "code": exc.code},
@@ -450,6 +577,31 @@ class PurchaseRequestViewSet(viewsets.ViewSet):
             )
         return Response(PurchaseRequestDetailSerializer(purchase_request).data)
 
+    @action(detail=True, methods=["post"])
+    def withdraw(self, request, pk=None):
+        try:
+            purchase_request = withdraw_request(
+                request.user,
+                pk,
+                version=request.data.get("version"),
+                reason=request.data.get("reason"),
+            )
+        except DraftNotFound as exc:
+            response_status = status.HTTP_404_NOT_FOUND
+            error = exc
+        except DraftPermissionDenied as exc:
+            response_status = status.HTTP_403_FORBIDDEN
+            error = exc
+        except DraftVersionConflict as exc:
+            response_status = status.HTTP_409_CONFLICT
+            error = exc
+        except DraftError as exc:
+            response_status = status.HTTP_400_BAD_REQUEST
+            error = exc
+        else:
+            return Response(PurchaseRequestDetailSerializer(purchase_request).data)
+        return Response({"detail": str(error), "code": error.code}, status=response_status)
+
 
 class QuoteViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = QuoteSerializer
@@ -467,13 +619,7 @@ class QuoteViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def withdraw(self, request, pk=None):
-        try:
-            quote = withdraw_quote(pk, request.user)
-        except ApprovalConflictError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        except ApprovalError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(QuoteSerializer(quote).data)
+        return legacy_command_retired_response()
 
 
 class ApprovalViewSet(viewsets.ReadOnlyModelViewSet):

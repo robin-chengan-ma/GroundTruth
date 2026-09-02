@@ -3,12 +3,13 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from api.core.permissions import IsBusinessAdmin
+from api.core.permissions import HasPermissionCode
 from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.audit import AuditLogRepository, ManualReviewQueueRepository
 from schemas.audit import AuditLogSerializer, ManualReviewQueueSerializer
 from services.manual_review_service import (
+    LegacyManualReviewRetiredError,
     ManualReviewConflictError,
     ManualReviewError,
     claim_review,
@@ -25,7 +26,13 @@ from services.masking_service import (
 class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ManualReviewQueueSerializer
     authentication_classes = [BusinessJwtAuthentication]
-    permission_classes = [IsBusinessAdmin]
+    permission_classes = [HasPermissionCode]
+
+    def get_permissions(self):
+        self.required_permission = (
+            "manual_review.claim" if self.action == "claim" else "manual_review.decide"
+        )
+        return super().get_permissions()
 
     def get_queryset(self):
         return ManualReviewQueueRepository.all()
@@ -35,6 +42,11 @@ class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
         """FR-6b：認領案件，避免多位管理員同時處理同一案件（衝突回 409）。"""
         try:
             review = claim_review(pk, request.user.id)
+        except LegacyManualReviewRetiredError as exc:
+            return Response(
+                {"detail": str(exc), "code": "legacy_command_retired"},
+                status=status.HTTP_410_GONE,
+            )
         except ManualReviewConflictError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ManualReviewError as exc:
@@ -53,6 +65,11 @@ class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
 
         try:
             review = decide_review(pk, request.user.id, decision, supplier_id=supplier_id)
+        except LegacyManualReviewRetiredError as exc:
+            return Response(
+                {"detail": str(exc), "code": "legacy_command_retired"},
+                status=status.HTTP_410_GONE,
+            )
         except ManualReviewConflictError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ManualReviewError as exc:
@@ -72,7 +89,8 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 
     serializer_class = AuditLogSerializer
     authentication_classes = [BusinessJwtAuthentication]
-    permission_classes = [IsBusinessAdmin]
+    permission_classes = [HasPermissionCode]
+    required_permission = "audit.read"
 
     def get_queryset(self):
         return AuditLogRepository.all()

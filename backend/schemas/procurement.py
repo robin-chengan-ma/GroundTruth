@@ -7,9 +7,37 @@ from apps.procurement.models import (
     Quote,
     QuoteRequirementResult,
     Rfq,
+    SupplierPriceVersion,
+    SupplierProduct,
     SupplierQuote,
     SupplierQuoteItem,
 )
+
+
+class SupplierPriceVersionSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.name", read_only=True)
+
+    class Meta:
+        model = SupplierPriceVersion
+        fields = [
+            "id", "supplier_product", "unit_price", "currency", "minimum_quantity",
+            "valid_from", "valid_until", "created_by", "created_by_name", "created_at",
+        ]
+        read_only_fields = ["id", "supplier_product", "created_by", "created_by_name", "created_at"]
+
+
+class SupplierProductSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source="supplier.name", read_only=True)
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    price_versions = SupplierPriceVersionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SupplierProduct
+        fields = [
+            "id", "supplier", "supplier_name", "product", "product_name", "supplier_sku",
+            "lead_time_days", "minimum_order_quantity", "quality_status", "is_active",
+            "price_versions", "created_at", "updated_at",
+        ]
 
 
 class QuoteSerializer(serializers.ModelSerializer):

@@ -62,7 +62,7 @@ function changePageSize(event: Event) {
 
 function closeDetail() {
   router.replace({
-    path: '/quotes',
+    path: '/purchase-requests',
     query: { page: String(page.value), page_size: String(pageSize.value) },
   })
 }
@@ -92,7 +92,7 @@ onMounted(load)
         <thead><tr><th>申請編號</th><th>採購用途</th><th>品項摘要</th><th>候選供應商</th><th>申請人</th><th>建立時間</th><th>狀態</th></tr></thead>
         <tbody>
           <tr v-for="request in requests" :key="request.id">
-            <td><RouterLink class="request-link" :to="`/quotes/${request.id}?page=${page}&page_size=${pageSize}`">{{ request.request_no }}</RouterLink></td><td>{{ request.purpose || '—' }}</td><td>{{ request.item_summary }}</td><td>{{ request.supplier_summary }}</td><td>{{ request.requester_name }}</td><td>{{ formatDateTime(request.created_at) }}</td><td><StatusBadge :status="request.status" /></td>
+            <td><RouterLink class="request-link" :to="`/purchase-requests/${request.id}?page=${page}&page_size=${pageSize}`">{{ request.request_no }}</RouterLink></td><td>{{ request.purpose || '—' }}</td><td>{{ request.item_summary }}</td><td>{{ request.supplier_summary }}</td><td>{{ request.requester_name }}</td><td>{{ formatDateTime(request.created_at) }}</td><td><StatusBadge :status="request.status" /></td>
           </tr>
         </tbody>
       </table>

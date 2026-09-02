@@ -406,3 +406,43 @@ def waive_requirement(user, result_id, reason):
     result.waived_at = timezone.now()
     result.save(update_fields=["result", "waiver_reason", "waived_by", "waived_at"])
     return result
+
+
+def _require_rfq_read_permission(user):
+    """FR-16：RFQ／供應商報價查詢僅開放採購管理與稽核角色，不對一般申請人開放。"""
+    if not (user_has_permission(user, "rfq.manage") or user_has_permission(user, "audit.read")):
+        raise RfqQuotePermissionDenied("沒有讀取 RFQ 的權限")
+
+
+def list_accessible_rfqs(user):
+    _require_rfq_read_permission(user)
+    return RfqRepository.accessible()
+
+
+def get_accessible_rfq(user, pk):
+    _require_rfq_read_permission(user)
+    try:
+        return RfqRepository.accessible().get(pk=pk)
+    except ObjectDoesNotExist as exc:
+        raise RfqQuoteNotFound("找不到指定的 RFQ") from exc
+
+
+def _require_supplier_quote_read_permission(user):
+    if not (
+        user_has_permission(user, "supplier_quote.manage")
+        or user_has_permission(user, "audit.read")
+    ):
+        raise RfqQuotePermissionDenied("沒有讀取供應商報價的權限")
+
+
+def list_accessible_quotes(user):
+    _require_supplier_quote_read_permission(user)
+    return SupplierQuoteRepository.accessible()
+
+
+def get_accessible_quote(user, pk):
+    _require_supplier_quote_read_permission(user)
+    try:
+        return SupplierQuoteRepository.accessible().get(pk=pk)
+    except ObjectDoesNotExist as exc:
+        raise RfqQuoteNotFound("找不到指定的供應商報價") from exc

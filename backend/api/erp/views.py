@@ -2,7 +2,7 @@ from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from api.core.permissions import AuthenticatedReadAdminWrite
+from api.core.permissions import AuthenticatedReadAdminWrite, HasPermissionCode
 from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.erp import (
@@ -198,20 +198,41 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return ProductRepository.all()
 
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {
+                "detail": "品項主檔不得實體刪除，請改為停用",
+                "code": "physical_delete_forbidden",
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
 
-class InventoryViewSet(viewsets.ModelViewSet):
+
+class InventoryViewSet(viewsets.ReadOnlyModelViewSet):
+    """唯讀庫存查詢：master_data.read／master_data.manage 不得替代，須有專屬 inventory.read。"""
+
     serializer_class = InventorySerializer
     authentication_classes = [BusinessJwtAuthentication]
-    permission_classes = [AuthenticatedReadAdminWrite]
+    permission_classes = [HasPermissionCode]
+    required_permission = "inventory.read"
 
     def get_queryset(self):
         return InventoryRepository.all()
 
 
 class PurchaseSuggestionViewSet(viewsets.ReadOnlyModelViewSet):
+    """FR-10a／FR-10b：低庫存採購建議查詢，list／retrieve 須有專屬 purchase_suggestion.read；
+    convert／dismiss 各自的授權已由 service 層依 purchase_request.create／admin 身分把關，
+    不套用讀取權限碼，避免混淆「能看」與「能轉單／忽略」兩種不同的能力。"""
+
     serializer_class = PurchaseSuggestionSerializer
     authentication_classes = [BusinessJwtAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve"):
+            self.required_permission = "purchase_suggestion.read"
+            return [HasPermissionCode()]
+        return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
         return PurchaseSuggestionRepository.all()

@@ -101,12 +101,11 @@ REFRESH_COOKIE_SECURE = os.environ.get("REFRESH_COOKIE_SECURE", "false").lower()
 REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
-    # Phase 1：先開放 AllowAny 以利 CRUD 驗收；使用者對外 JWT 認證（FR-1a 前半）留待 Vue 前端串接時（Phase 4）套用。
+    # FR-18：未明確宣告公開或內部服務認證的 API 一律拒絕匿名存取。
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.AllowAny",
+        "rest_framework.permissions.IsAuthenticated",
     ],
-    # Phase 2：n8n↔Django 內部端點另外用 InternalApiKeyAuthentication + IsAuthenticated 明確保護，
-    # 不放進 DEFAULT_AUTHENTICATION_CLASSES 全域套用，避免影響一般 CRUD 端點的 AllowAny 行為。
+    # n8n↔Django 內部端點另外明確使用 InternalApiKeyAuthentication。
 }
 
 # n8n ↔ Django 內部服務認證（FR-1a）與流程協調用設定。

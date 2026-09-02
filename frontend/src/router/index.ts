@@ -5,7 +5,7 @@ import ApprovalView from '../views/ApprovalView.vue'
 import InquiryView from '../views/InquiryView.vue'
 import LoginView from '../views/LoginView.vue'
 import ManualReviewView from '../views/ManualReviewView.vue'
-import QuoteListView from '../views/QuoteListView.vue'
+import PurchaseRequestListView from '../views/PurchaseRequestListView.vue'
 import { canAccess, firstAccessiblePath } from '../navigation'
 
 const router = createRouter({
@@ -20,15 +20,15 @@ const router = createRouter({
       meta: { permissions: ['purchase_request.create'] },
     },
     {
-      path: '/quotes',
-      name: 'quotes',
-      component: QuoteListView,
+      path: '/purchase-requests',
+      name: 'purchase-requests',
+      component: PurchaseRequestListView,
       meta: { permissions: ['purchase_request.read_own'] },
     },
     {
-      path: '/quotes/:id',
+      path: '/purchase-requests/:id',
       name: 'purchase-request-detail',
-      component: QuoteListView,
+      component: PurchaseRequestListView,
       meta: { permissions: ['purchase_request.read_own'] },
     },
     {

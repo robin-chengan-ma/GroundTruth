@@ -1,11 +1,20 @@
 import pytest
 
+from apps.core.models import Permission, RolePermission, UserRole
 from services.authentication_service import issue_token_pair
 
 
 def bearer(user):
     access, _, _ = issue_token_pair(user)
     return f"Bearer {access}"
+
+
+def grant_master_read(user):
+    UserRole.objects.get_or_create(user=user, role=user.role)
+    permission, _ = Permission.objects.get_or_create(
+        code="master_data.read", defaults={"name": "讀取主檔"},
+    )
+    RolePermission.objects.get_or_create(role=user.role, permission=permission)
 
 
 @pytest.mark.django_db
@@ -38,6 +47,7 @@ def test_quote_calculate_wrong_key_rejected(api_client, product, supplier, user,
 
 @pytest.mark.django_db
 def test_supplier_search_by_name(api_client, supplier, user):
+    grant_master_read(user)
     resp = api_client.get(f"/api/v1/suppliers/?search={supplier.name}", HTTP_AUTHORIZATION=bearer(user))
     assert resp.status_code == 200
     assert resp.data["count"] == 1
@@ -65,6 +75,7 @@ def test_supplier_search_allows_internal_api_key_read_only(api_client, supplier,
 
 @pytest.mark.django_db
 def test_product_search_by_name(api_client, product, user):
+    grant_master_read(user)
     resp = api_client.get(f"/api/v1/products/?search={product.name}", HTTP_AUTHORIZATION=bearer(user))
     assert resp.status_code == 200
     assert resp.data["count"] == 1

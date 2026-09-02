@@ -1,4 +1,5 @@
-from rest_framework import filters, viewsets
+from rest_framework import filters, status, viewsets
+from rest_framework.response import Response
 
 from api.core.permissions import AuthenticatedReadAdminWrite
 from lib.authentication import InternalApiKeyAuthentication
@@ -16,3 +17,12 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return SupplierRepository.all()
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {
+                "detail": "供應商主檔不得實體刪除，請改為停用",
+                "code": "physical_delete_forbidden",
+            },
+            status=status.HTTP_409_CONFLICT,
+        )

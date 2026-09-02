@@ -4,9 +4,8 @@ import pytest
 from django.contrib.auth.hashers import check_password
 
 from apps.audit.models import ManualReviewQueue
-from apps.core.models import Role, User
+from apps.core.models import Permission, Role, RolePermission, User, UserRole
 from apps.procurement.models import Quote
-from services.approval_routing_service import route_quote
 from services.authentication_service import issue_token_pair
 
 
@@ -50,19 +49,23 @@ def test_requester_can_withdraw_through_api(api_client, user, supplier, product)
         currency="TWD",
         status=Quote.Status.PENDING_APPROVAL,
     )
-    route_quote(quote)
 
     response = api_client.post(
         f"/api/v1/quotes/{quote.id}/withdraw/", HTTP_AUTHORIZATION=bearer(user)
     )
 
-    assert response.status_code == 200
-    assert response.data["status"] == "cancelled"
+    assert response.status_code == 410
+    assert response.data["code"] == "legacy_command_retired"
+    quote.refresh_from_db()
+    assert quote.status == Quote.Status.PENDING_APPROVAL
 
 
 @pytest.mark.django_db
 def test_manual_review_requires_admin(api_client, user, role_admin):
     admin = User.objects.create(name="Admin", email="admin@example.com", password="x", role=role_admin)
+    UserRole.objects.create(user=admin, role=role_admin)
+    permission = Permission.objects.create(code="manual_review.decide", name="決議人工複核")
+    RolePermission.objects.create(role=role_admin, permission=permission)
     ManualReviewQueue.objects.create(review_type=ManualReviewQueue.ReviewType.SUPPLIER_FUZZY_MATCH)
 
     employee_response = api_client.get(
@@ -81,6 +84,9 @@ def test_admin_user_crud_hashes_password(api_client, role_admin, role_employee):
     admin = User.objects.create(
         name="Admin", email="admin@example.com", password="unused", role=role_admin
     )
+    UserRole.objects.create(user=admin, role=role_admin)
+    permission = Permission.objects.create(code="identity.manage", name="管理身分")
+    RolePermission.objects.create(role=role_admin, permission=permission)
     authorization = bearer(admin)
 
     created = api_client.post(

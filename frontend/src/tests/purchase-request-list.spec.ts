@@ -19,7 +19,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ replace }),
   RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
 }))
-import QuoteListView from '../views/QuoteListView.vue'
+import PurchaseRequestListView from '../views/PurchaseRequestListView.vue'
 
 describe('PurchaseRequestList', () => {
   beforeEach(() => {
@@ -36,7 +36,7 @@ describe('PurchaseRequestList', () => {
         created_at: '2026-08-31T08:00:00Z',
       }],
     } })
-    const wrapper = mount(QuoteListView)
+    const wrapper = mount(PurchaseRequestListView)
     await flushPromises()
 
     expect(get).toHaveBeenCalledWith('/purchase-requests/', { params: { page: 2, page_size: 10 } })
@@ -45,12 +45,12 @@ describe('PurchaseRequestList', () => {
     expect(wrapper.text()).toContain('辦公設備汰換')
     expect(wrapper.text()).toContain('共 21 筆')
     expect(wrapper.text()).toContain('2 / 3')
-    expect(wrapper.get('a').attributes('href')).toContain('/quotes/9?page=2&page_size=10')
+    expect(wrapper.get('a').attributes('href')).toContain('/purchase-requests/9?page=2&page_size=10')
   })
 
   it('切換每頁筆數時回到第一頁並更新網址', async () => {
     get.mockResolvedValue({ data: { count: 0, page: 2, page_size: 10, total_pages: 1, results: [] } })
-    const wrapper = mount(QuoteListView)
+    const wrapper = mount(PurchaseRequestListView)
     await flushPromises()
 
     await wrapper.get('select[aria-label="每頁筆數"]').setValue('50')
@@ -61,13 +61,13 @@ describe('PurchaseRequestList', () => {
   it('關閉詳情彈窗時回到原清單查詢狀態', async () => {
     route.params = { id: '9' }
     get.mockResolvedValue({ data: { count: 0, page: 2, page_size: 10, total_pages: 1, results: [] } })
-    const wrapper = mount(QuoteListView)
+    const wrapper = mount(PurchaseRequestListView)
     await flushPromises()
 
     await wrapper.get('button[aria-label="關閉採購需求詳情"]').trigger('click')
 
     expect(replace).toHaveBeenCalledWith({
-      path: '/quotes',
+      path: '/purchase-requests',
       query: { page: '2', page_size: '10' },
     })
   })
