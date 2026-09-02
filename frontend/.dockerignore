@@ -1,0 +1,14 @@
+# build context 是 frontend/ 這個目錄本身，不是根目錄的 .dockerignore 涵蓋範圍
+# （Docker 只讀取 build context 根目錄下的 .dockerignore）。
+#
+# node_modules 尤其重要：host 端可能已經跑過 pnpm install（例如 macOS arm64），
+# 若不排除，COPY . . 會把 host 平台的 native binary（esbuild 等）複製進 Linux
+# 容器，覆蓋掉容器內剛裝好的正確版本，導致建置或執行時期出現平台不符的錯誤。
+node_modules/
+dist/
+.git
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

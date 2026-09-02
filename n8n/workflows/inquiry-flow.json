@@ -1,7 +1,22 @@
 {
   "id": "groundtruth-inquiry-flow-phase3",
-  "name": "GroundTruth - 詢價主流程（Phase 3：含遮罩／幻覺驗證）",
+  "name": "[歷史／Phase 3 已停用] GroundTruth - 詢價主流程（含遮罩／幻覺驗證）",
   "nodes": [
+    {
+      "parameters": {
+        "content": "此 workflow 為 Phase 3 舊版設計，兩條分支呼叫的 Django 端點皆已於 Phase 5.0-B3A\n退場、統一回 410 Gone／legacy_command_retired：\n- 「Webhook 接收詢價」分支：呼叫 /quotes/calculate/、/quotes/verify-hallucination/\n- 「Webhook 續傳詢價」分支：同上，且其上游 /inquiries/trigger/ 與 FR-6a 現行流程\n  （services/inquiry_resume_service.py 2026-09-02 改版）已改為 Django 直接處理，\n  不再交還這支 webhook\n\n目前沒有任何正式前端或後端程式碼會呼叫這支 workflow 的任一端點，僅保留供歷史對照\n（決策見 docs/ADR/discuss/main-flow.md、docs/ADR/debug/phase5-security.md）。\nPhase 5 起的正式候選解析流程請見 purchase-request-candidate-flow.json。",
+        "height": 380,
+        "width": 480
+      },
+      "id": "note-legacy",
+      "name": "說明：此 workflow 已停用",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -420
+      ]
+    },
     {
       "parameters": {
         "httpMethod": "POST",

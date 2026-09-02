@@ -51,6 +51,7 @@ from services.inquiry_service import (
     InquiryValidationError,
     parse_purchase_request_candidate,
 )
+from services.notification_service import first_claimable_step, notify_approval_step_activated
 from services.purchase_order_service import (
     PurchaseOrderConflict,
     PurchaseOrderError,
@@ -192,6 +193,14 @@ class AwardDecisionViewSet(viewsets.ViewSet):
             award = submit_award(request.user, pk)
         except AwardSelectionError as exc:
             return self._error_response(exc)
+        # FR-8：submit_award() 內部的 create_approval_case_for_award() 是包在得標提交
+        # 的 transaction 內呼叫（見該函式 docstring），這裡呼叫端已經在交易提交「之後」，
+        # 才適合觸發耗時的外部通知呼叫；best-effort，失敗不影響已提交的得標與案件建立。
+        case = getattr(award, "approval_case", None)
+        if case is not None:
+            step = first_claimable_step(case)
+            if step is not None:
+                notify_approval_step_activated(step)
         return Response(serialize_award(award))
 
 
@@ -250,6 +259,12 @@ class ApprovalStepViewSet(ApprovalWorkflowErrorMixin, viewsets.ViewSet):
             )
         except ApprovalWorkflowError as exc:
             return self._approval_workflow_error_response(exc)
+        # FR-8：decide_step() 本身是 @transaction.atomic，這裡是交易提交之後才呼叫；
+        # 核准且案件尚未結案時通知下一關角色，駁回或案件已結案時 first_claimable_step
+        # 回傳 None，不會誤發通知。best-effort，失敗不影響已提交的決議。
+        next_step = first_claimable_step(step.approval_case)
+        if next_step is not None:
+            notify_approval_step_activated(next_step)
         return Response(serialize_step(step, request.user))
 
 

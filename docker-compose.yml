@@ -1,0 +1,146 @@
+# Phase 7：全服務一鍵啟動（postgres + backend + frontend + n8n + n8n-init）。
+# 非公開上線用途，只在本機執行 `docker compose up`；正式對外使用前應補上
+# n8n basic auth、HTTPS 等基礎設施（見 docs/reference/deploy.md 已知限制）。
+#
+# 使用方式：複製 .env.example 為 .env 並填入必要值，於本檔案所在目錄執行
+# `docker compose up --build`。
+#
+# 一鍵啟動涵蓋範圍（2026-09-02，Codex 建議、Robin 核准的方案）：
+# - backend 容器啟動時依 LOAD_DEMO_DATA 決定是否自動灌入 demo 種子資料
+#   （預設 true；`seed_demo_data` 全部用 get_or_create，重複執行不會產生
+#   重複資料，也不會清空或覆蓋既有正式資料，見 backend/docker-entrypoint.sh）。
+# - n8n 主服務 healthcheck 通過後，獨立的 n8n-init 服務會自動匯入現行必要
+#   的「採購需求候選解析」與「Gmail 通知」workflow 並啟用前者（見
+#   n8n/scripts/init-workflows.sh）；workflow JSON 內建固定 id，重複執行是
+#   覆寫而非新增副本，冪等。legacy `inquiry-flow.json` 不在匯入清單內，本
+#   流程不會碰到或啟用它。
+# - Gmail 通知 workflow 只匯入、刻意不自動啟用：Google 帳號 OAuth 授權仍須
+#   在 n8n 畫面上手動完成一次（無法自動化），完成後才由 Robin 手動啟用。
+# - n8n CLI 各版本啟用行為不完全一致（見 docs/reference/deploy.md「已知限
+#   制」），本沙箱環境連不到容器登錄檔、無法實際跑 `docker compose up`
+#   驗證，這段自動化未經真實環境驗證，Robin 首次啟動時務必檢查
+#   n8n-init 容器的 log 與 n8n 畫面上的實際啟用狀態。
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: groundtruth-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-groundtruth}
+      - POSTGRES_USER=${POSTGRES_USER:-groundtruth}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?請在 .env 設定 POSTGRES_PASSWORD}
+    volumes:
+      - groundtruth_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-groundtruth} -d ${POSTGRES_DB:-groundtruth}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: groundtruth-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?請在 .env 設定 DJANGO_SECRET_KEY（至少 32 bytes 隨機字串）}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-false}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
+      - POSTGRES_DB=${POSTGRES_DB:-groundtruth}
+      - POSTGRES_USER=${POSTGRES_USER:-groundtruth}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?請在 .env 設定 POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?請在 .env 設定 INTERNAL_API_KEY，需與 n8n 的值一致}
+      # 容器間用 service 名稱互連，不是 host.docker.internal（那是給 n8n 容器
+      # 存取「本機非容器」Django 用的舊指令，Phase 7 三者都在同一個 compose 網路內）。
+      - N8N_INQUIRY_WEBHOOK_URL=http://n8n:5678/webhook/inquiry
+      - N8N_INQUIRY_PARSE_WEBHOOK_URL=http://n8n:5678/webhook/purchase-request-candidate
+      - N8N_RESUME_WEBHOOK_URL=http://n8n:5678/webhook/inquiry/resume
+      - N8N_NOTIFY_WEBHOOK_URL=http://n8n:5678/webhook/notify
+      # 給 Gmail 通知信附連結用（FR-8），是使用者瀏覽器要開的網址，必須是 host 對外
+      # 的 frontend 埠（見下方 frontend ports），不能填容器內部 service 名稱。
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:5173}
+      - REFRESH_COOKIE_SECURE=${REFRESH_COOKIE_SECURE:-false}
+      # true 時容器啟動會自動跑 seed_demo_data（冪等，見上方檔頭說明與
+      # backend/docker-entrypoint.sh）；不需要 demo 假資料時可在 .env 設為 false。
+      - LOAD_DEMO_DATA=${LOAD_DEMO_DATA:-true}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      # 尚無專用健康檢查端點（見 docs/reference/deploy.md）：未帶 Token 呼叫
+      # /api/v1/auth/me/ 固定回 401，代表 Django 路由存活，用這個訊號判斷健康。
+      test: ["CMD-SHELL", "[ \"$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/v1/auth/me/)\" = \"401\" ]"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  frontend:
+    build: ./frontend
+    container_name: groundtruth-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: groundtruth-n8n
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5678:5678"
+    environment:
+      - TZ=Asia/Taipei
+      - GENERIC_TIMEZONE=Asia/Taipei
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      # n8n 2.x 預設擋 Code/Expression node 存取 $env，workflow 裡的
+      # {{$env.xxx}} 需要這個才能用（見 docs/ADR/debug/n8n-env-access.md）。
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - DJANGO_API_BASE_URL=http://backend:8000
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?請在 .env 設定 INTERNAL_API_KEY，需與 backend 的值一致}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:?請在 .env 設定 GEMINI_API_KEY}
+    volumes:
+      - groundtruth_n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/workflows:ro
+    healthcheck:
+      # n8n 一般模式（非 queue mode）預設就有這個端點，不需要額外環境變數；
+      # DB 連線與 migration 都完成才回 200，比單純的 /healthz 更適合當
+      # 「可以開始匯入 workflow 了」的訊號。
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:5678/healthz/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # 見檔頭說明：等 n8n healthcheck 通過後，冪等匯入現行必要 workflow 並啟用
+  # AI 解析流程；Gmail 通知流程只匯入不啟用。跑完一次就結束（無 restart），
+  # 不影響 backend／frontend／n8n 主服務啟動，每次 `docker compose up` 都會
+  # 再跑一次，因為是冪等覆寫，重複執行安全。
+  n8n-init:
+    image: n8nio/n8n:latest
+    container_name: groundtruth-n8n-init
+    restart: "no"
+    depends_on:
+      n8n:
+        condition: service_healthy
+    volumes:
+      # 與 n8n 主服務共用同一份資料，匯入結果對正在跑的 n8n 立即生效，
+      # 不需要重啟 n8n 容器。
+      - groundtruth_n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/workflows:ro
+      - ./n8n/scripts/init-workflows.sh:/home/node/init-workflows.sh:ro
+    entrypoint: ["/bin/sh", "/home/node/init-workflows.sh"]
+
+volumes:
+  groundtruth_postgres_data:
+  groundtruth_n8n_data:

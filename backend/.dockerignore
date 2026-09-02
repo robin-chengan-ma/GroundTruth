@@ -1,0 +1,14 @@
+# build context 是 backend/ 這個目錄本身，不是根目錄的 .dockerignore 涵蓋範圍。
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+*.log
+.git
+.env
+.env.*
+!.env.example
+.DS_Store

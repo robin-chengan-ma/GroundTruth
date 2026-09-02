@@ -1,0 +1,121 @@
+{
+  "id": "groundtruth-purchase-request-candidate-flow",
+  "name": "GroundTruth - 採購需求候選解析（Phase 5 起正式流程）",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "Phase 5 起，遮罩／還原、供應商與品項比對、Purchase Request 建立全部改由 Django\n（`services/inquiry_service.py`、`services/masking_service.py`）處理；這支 workflow\n只負責「純解析」：接收 Django 已遮罩好的文字，呼叫 Gemini 解析成結構化候選，原樣把\nToken（SUP_xxx／AMOUNT_xxx）交還，不呼叫任何 Django 查詢／試算／摘要 API，也不做\n供應商或品項比對。\n\n對應 Django 呼叫端：`repositories/inquiry.py:request_candidate_parse()`，\n環境變數 `N8N_INQUIRY_PARSE_WEBHOOK_URL`（預設路徑 `webhook/purchase-request-candidate`）。\n同一支 webhook 同時服務兩種情境：\n1. 一般候選解析（`services/inquiry_service.py:parse_purchase_request_candidate`）\n2. FR-6a 人工複核核准後的續傳解析（`resolve_candidate_after_manual_review`）\n兩者呼叫的 payload 形狀相同（`{raw_text, user_id}`），這支 workflow 不需要分流。",
+        "height": 320,
+        "width": 460
+      },
+      "id": "note-scope",
+      "name": "說明：本流程範圍",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -360
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "purchase-request-candidate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-candidate-parse",
+      "name": "Webhook 接收候選解析請求",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        0
+      ],
+      "webhookId": "purchase-request-candidate"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={{$env.GEMINI_API_KEY}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: `你是企業採購需求解析器。以下文字中的供應商名稱與金額已被 Token 化遮罩（例如 SUP_001、AMOUNT_001），請將這些 Token 原樣保留在你的輸出裡，絕對不要嘗試還原、翻譯或修改 Token 文字本身。\\n\\n將文字解析成一個 JSON 物件，只回傳 JSON，不要其他說明文字或 Markdown code fence，格式為：\\n{\\n  \\\"purpose\\\": string,               // 採購用途／需求摘要，找不到時用原文\\n  \\\"needed_by\\\": string | null,       // 需求日期，格式 YYYY-MM-DD；文字未提及則為 null\\n  \\\"currency\\\": string,               // 幣別代碼，預設 \\\"TWD\\\"\\n  \\\"assistant_message\\\": string,      // 給使用者看的一句話中文確認訊息\\n  \\\"suppliers\\\": [ { \\\"name\\\": string } ],   // 文字中出現的供應商 Token（如 SUP_001），可有多筆\\n  \\\"items\\\": [\\n    {\\n      \\\"product_name\\\": string,       // 品項名稱（真實文字，非 Token）\\n      \\\"quantity\\\": number,           // 正數，文字未明確提供時給 null\\n      \\\"unit_of_measure\\\": string,    // 單位，找不到時用 \\\"EA\\\"\\n      \\\"specifications\\\": object      // 材質／尺寸／特色等描述，沒有則為 {}\\n    }\\n  ]\\n}\\n\\n可能包含多個品項與多間候選供應商，請盡量完整列出；無法判斷的欄位給 null 或空物件，\\n不要猜測或捏造未提及的數字。\\n\\n${$json.body.raw_text}` }] }] }) }}",
+        "options": {}
+      },
+      "id": "http-gemini-parse-candidate",
+      "name": "Gemini 解析候選",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 從 Gemini 回應中取出文字並解析成候選結構；格式錯誤或欄位缺漏時盡量降級輸出\n// 空陣列／null，而不是整個請求失敗——後續是否 ready_for_draft 由 Django\n// （inquiry_service.py 的 missing_fields 判斷）負責，這裡只做基本防呆與型別修正。\nconst text = $input.first().json.candidates?.[0]?.content?.parts?.[0]?.text || '';\nconst cleaned = text.replace(/```json|```/g, '').trim();\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  parsed = {};\n}\n\nconst toArray = value => (Array.isArray(value) ? value : []);\nconst toObject = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});\n\nconst suppliers = toArray(parsed.suppliers)\n  .map(row => ({ name: String((row && (row.name || row.supplier_name)) || '').trim() }))\n  .filter(row => row.name);\n\nconst items = toArray(parsed.items).map(row => ({\n  product_name: String((row && (row.product_name || row.name)) || '').trim(),\n  quantity: row && row.quantity !== undefined && row.quantity !== null && row.quantity !== '' ? row.quantity : null,\n  unit_of_measure: String((row && row.unit_of_measure) || 'EA'),\n  specifications: toObject(row && row.specifications),\n}));\n\nreturn [{\n  json: {\n    purpose: String(parsed.purpose || '').trim(),\n    needed_by: parsed.needed_by || null,\n    currency: String(parsed.currency || 'TWD').toUpperCase(),\n    assistant_message: String(parsed.assistant_message || '請確認 AI 整理的需求內容。'),\n    suppliers,\n    items,\n  }\n}];\n"
+      },
+      "id": "code-normalize-candidate",
+      "name": "整理候選結構",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-candidate",
+      "name": "回覆：候選結構",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        40,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook 接收候選解析請求": {
+      "main": [
+        [
+          {
+            "node": "Gemini 解析候選",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini 解析候選": {
+      "main": [
+        [
+          {
+            "node": "整理候選結構",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "整理候選結構": {
+      "main": [
+        [
+          {
+            "node": "回覆：候選結構",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

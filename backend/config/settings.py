@@ -119,3 +119,10 @@ N8N_INQUIRY_PARSE_WEBHOOK_URL = os.environ.get(
 # n8n/workflows/inquiry-flow.json 的「Webhook 續傳詢價」分支同步成為死分支。保留此設定
 # 與其預設值，避免尚未更新 .env 的環境啟動失敗；決策見 docs/ADR/discuss/main-flow.md。
 N8N_RESUME_WEBHOOK_URL = os.environ.get("N8N_RESUME_WEBHOOK_URL", "http://localhost:5678/webhook/inquiry/resume")
+# FR-6b／FR-8：Gmail 通知（見 services/notification_service.py）；n8n 端只負責收
+# {subject, body, recipients, link} 呼叫 Gmail 節點寄出，收件人與內容組裝都在 Django。
+N8N_NOTIFY_WEBHOOK_URL = os.environ.get("N8N_NOTIFY_WEBHOOK_URL", "http://localhost:5678/webhook/notify")
+
+# FR-8：Gmail 通知須附上簽核頁面連結；FR-6b 通知同樣附上複核佇列連結（規格未強制但保持一致）。
+# 對應前端 Docker Compose 服務的 host 對外埠（見根目錄 docker-compose.yml frontend ports）。
+FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173")

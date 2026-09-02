@@ -31,6 +31,7 @@ import re
 
 from apps.audit.models import ManualReviewQueue
 from repositories.crm import SupplierRepository
+from services.notification_service import notify_manual_review_created
 
 FUZZY_MATCH_THRESHOLD = 0.6  # demo 合理標準，非嚴謹統計門檻
 LENGTH_SAFETY_RATIO = 0.6  # 命中片段長度須達供應商全名長度的此比例，才允許預填 supplier
@@ -81,6 +82,9 @@ def mask_text(raw_text: str, requester_id=None) -> dict:
             supplier=None,
             requester_id=requester_id,
         )
+        # FR-6b：不在 transaction 內（此函式未使用 transaction.atomic），可直接呼叫；
+        # best-effort，失敗不影響已寫入的複核案件。
+        notify_manual_review_created(review)
         return {
             "outcome": "supplier_fuzzy_match",
             "review_id": review.id,
@@ -104,6 +108,7 @@ def mask_text(raw_text: str, requester_id=None) -> dict:
         supplier=best_supplier,
         requester_id=requester_id,
     )
+    notify_manual_review_created(review)  # FR-6b：best-effort，見上方說明
     return {
         "outcome": "supplier_fuzzy_match",
         "review_id": review.id,

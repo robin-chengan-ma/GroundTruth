@@ -1,0 +1,193 @@
+{
+  "id": "groundtruth-notification-flow",
+  "name": "GroundTruth - Gmail 通知（FR-6b／FR-8）",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "收件人清單與信件標題／內文由 Django 決定並在請求中送來（見\nbackend/services/notification_service.py，分工原則：業務邏輯在 Django，n8n 只做串接）。\n這支 workflow 只負責把 Django 給的內容轉成一封 Gmail 寄給所有收件人（To 以逗號合併），\n不做任何權限或收件人判斷；webhook 只能回應一次，故刻意不把收件人展開成多個 item。\n\n呼叫端：\n- FR-6b `notify_manual_review_created()`：ManualReviewQueue 建立後\n- FR-8 `notify_approval_step_activated()`：簽核關卡建立／解鎖時\n\n匯入本 workflow 後，需要手動在「寄送 Gmail」節點上完成一次 Google 帳號 OAuth 授權\n（Sign in with Google），這一步無法用程式自動完成，只能由 n8n 使用者在畫面上手動點擊。",
+        "height": 300,
+        "width": 460
+      },
+      "id": "note-scope",
+      "name": "說明：本流程範圍",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "notify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-notify",
+      "name": "Webhook 接收通知請求",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        0
+      ],
+      "webhookId": "notify"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Django 送來 { subject, body, recipients: [email, ...], link }。\n// 刻意保持單一 item（收件人以逗號合併成一個 To 欄位、Gmail 一次寄給所有人），\n// 而不是每個收件人各自觸發一次 Gmail 執行——webhook 只能回應一次，若在這裡\n// 展開成多個 item，後面的「寄送 Gmail」「回覆」節點會被觸發多次，webhook\n// 只有第一次成功、其餘會噴 already responded 的錯誤。\nconst payload = $input.first().json.body || {};\nconst recipients = Array.isArray(payload.recipients) ? payload.recipients : [];\nconst subject = String(payload.subject || '(無主旨)');\nconst link = String(payload.link || '');\nconst bodyText = String(payload.body || '') + (link ? `\\n\\n連結：${link}` : '');\n\nif (!recipients.length) {\n  return [{ json: { skipped: true, reason: 'no_recipients' } }];\n}\n\nreturn [{ json: { to: recipients.join(','), subject, body: bodyText } }];\n"
+      },
+      "id": "code-expand-recipients",
+      "name": "整理收件人與內容",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-recipient",
+              "leftValue": "={{$json.skipped}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-recipient",
+      "name": "IF：有收件人？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.to}}",
+        "subject": "={{$json.subject}}",
+        "message": "={{$json.body}}",
+        "options": {}
+      },
+      "id": "gmail-send",
+      "name": "寄送 Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        40,
+        -120
+      ],
+      "webhookId": "gmail-send-placeholder",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { sent: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-sent",
+      "name": "回覆：已寄出",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { sent: false, reason: 'no_recipients' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-skipped",
+      "name": "回覆：無收件人",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        40,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook 接收通知請求": {
+      "main": [
+        [
+          {
+            "node": "整理收件人與內容",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "整理收件人與內容": {
+      "main": [
+        [
+          {
+            "node": "IF：有收件人？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：有收件人？": {
+      "main": [
+        [
+          {
+            "node": "寄送 Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆：無收件人",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "寄送 Gmail": {
+      "main": [
+        [
+          {
+            "node": "回覆：已寄出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
