@@ -43,6 +43,7 @@ from services.award_selection_service import (
     submit_award,
     update_award_draft,
 )
+from services.candidate_audit_service import create_candidate_token, record_candidate_parse
 from services.inquiry_service import (
     InquiryTriggerError,
     InquiryValidationError,
@@ -686,6 +687,8 @@ class InquiryCandidateParseView(APIView):
             ],
         })
         result["supplier_product_coverage"] = coverage["rows"]
+        result["candidate_token"] = create_candidate_token(request.user.id, result)
+        record_candidate_parse(request.user, result)
         return Response(result)
 
 

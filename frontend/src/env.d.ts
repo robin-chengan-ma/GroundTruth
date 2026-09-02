@@ -6,5 +6,6 @@ declare module 'vue-router' {
   interface RouteMeta {
     public?: boolean
     permissions?: string[]
+    anyPermissions?: string[]
   }
 }

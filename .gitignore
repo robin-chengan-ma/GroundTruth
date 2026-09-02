@@ -57,6 +57,7 @@ coverage.xml
 cover/
 frontend/coverage/
 frontend/dist/
+node_modules/
 frontend/node_modules/
 .pnpm-store/
 frontend/*.tsbuildinfo
@@ -212,6 +213,9 @@ cython_debug/
 # .vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
+
+# Local AI workspace transfer artifacts
+_phase6_sync_incoming.tar.gz
 
 # Ruff stuff:
 .ruff_cache/

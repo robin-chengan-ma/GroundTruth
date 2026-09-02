@@ -10,6 +10,7 @@ const parsedCandidate = {
   supplier_candidates: [{ supplier_id: 1, supplier_name: '優品科技' }],
   items: [{ product_id: 10, product_name: '辦公椅', quantity: '5', unit_of_measure: 'EA', specifications: {} }],
   missing_fields: [], ready_for_draft: true,
+  candidate_token: 'signed-candidate-token',
   supplier_product_coverage: [{ supplier_id: 1, supplier_name: '優品科技', product_id: 10, product_name: '辦公椅', status: 'priced', label: '可供應，且有有效價格', unit_price: '1500.00', currency: 'TWD' }],
 }
 

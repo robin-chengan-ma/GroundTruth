@@ -183,18 +183,46 @@ class PurchaseRequestDetailSerializer(serializers.ModelSerializer):
 
 class RfqSerializer(serializers.ModelSerializer):
     request_id = serializers.IntegerField(source="request.id", read_only=True)
+    request_no = serializers.CharField(source="request.request_no", read_only=True)
+    request_purpose = serializers.CharField(source="request.purpose", read_only=True)
     supplier_ids = serializers.SerializerMethodField()
+    invited_suppliers = serializers.SerializerMethodField()
     criteria = serializers.SerializerMethodField()
+    request_items = serializers.SerializerMethodField()
 
     class Meta:
         model = Rfq
         fields = [
-            "id", "rfq_no", "request_id", "revision", "status", "response_due_at",
-            "rule_snapshot", "version", "supplier_ids", "criteria", "created_at", "updated_at",
+            "id", "rfq_no", "request_id", "request_no", "request_purpose", "revision", "status",
+            "response_due_at", "rule_snapshot", "version", "supplier_ids", "invited_suppliers",
+            "criteria", "request_items", "created_at", "updated_at",
         ]
 
     def get_supplier_ids(self, obj):
         return list(obj.invited_suppliers.values_list("supplier_id", flat=True))
+
+    def get_request_items(self, obj):
+        """rfq.manage／audit.read 對 RFQ 的讀取權限本就比一般申請人的
+        purchase_request.read_own 更高；但 PurchaseRequestViewSet.retrieve 只開放需求本人
+        （見 get_owned_request），採購人員無法用它查看別人送出的需求明細。RFQ 詳情在此一併
+        附上需求明細快照，前端才能在建立供應商報價時知道要填哪些 request_item_id。"""
+        return PurchaseRequestItemSerializer(obj.request.items.all().order_by("line_no"), many=True).data
+
+    def get_invited_suppliers(self, obj):
+        """前端建立供應商報價（POST /supplier-quotes/）需要 rfq_supplier_id（邀請關係本身
+        的主鍵，不是 supplier_id），但目前沒有獨立的 rfq-suppliers 查詢端點；於此一併回傳，
+        避免前端無法取得建立報價所需的邀請 id。"""
+        return [
+            {
+                "rfq_supplier_id": invitation.id,
+                "supplier_id": invitation.supplier_id,
+                "supplier_name": invitation.supplier.name,
+                "status": invitation.status,
+                "invited_at": invitation.invited_at,
+                "responded_at": invitation.responded_at,
+            }
+            for invitation in obj.invited_suppliers.select_related("supplier").all()
+        ]
 
     def get_criteria(self, obj):
         return [

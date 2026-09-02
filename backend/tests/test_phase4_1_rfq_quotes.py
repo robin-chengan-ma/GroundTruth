@@ -85,6 +85,32 @@ def test_issue_rfq_freezes_default_criteria_and_moves_request_to_sourcing(
 
 
 @pytest.mark.django_db
+def test_rfq_detail_exposes_invited_suppliers_for_quote_creation(
+    api_client, user, role_employee, supplier, product,
+):
+    """Phase 6：前端建立供應商報價需要 rfq_supplier_id（邀請關係本身的主鍵），
+    supplier_ids 只有 supplier_id，故 RfqSerializer 另外提供 invited_suppliers。"""
+    _grant(user, role_employee, "rfq.manage")
+    api_client.force_authenticate(user=user)
+    _, _, rfq, invitation = _submitted_request(user, supplier, product)
+
+    response = api_client.get(f"/api/v1/rfqs/{rfq.id}/")
+
+    assert response.status_code == 200
+    assert response.data["invited_suppliers"] == [{
+        "rfq_supplier_id": invitation.id,
+        "supplier_id": supplier.id,
+        "supplier_name": supplier.name,
+        "status": "invited",
+        "invited_at": invitation.invited_at,
+        "responded_at": None,
+    }]
+    assert response.data["request_no"] == "PR-C3-001"
+    assert len(response.data["request_items"]) == 1
+    assert response.data["request_items"][0]["product_name"] == product.name
+
+
+@pytest.mark.django_db
 def test_issue_rfq_rejects_stale_version_and_past_deadline(
     api_client, user, role_employee, supplier, product,
 ):

@@ -158,7 +158,7 @@ async function saveAndEstimate() {
   loading.value = true
   error.value = ''
   estimate.value = null
-  const payload = { purpose: candidate.value.purpose, needed_by: candidate.value.needed_by || null, currency: candidate.value.currency, supplier_ids: selectedSupplierIds.value, items: candidate.value.items.map(itemPayload) }
+  const payload = { purpose: candidate.value.purpose, needed_by: candidate.value.needed_by || null, currency: candidate.value.currency, supplier_ids: selectedSupplierIds.value, items: candidate.value.items.map(itemPayload), candidate_token: candidate.value.candidate_token }
   try {
     if (draft.value) {
       const response = await api.patch<PurchaseDraft>(`/purchase-request-drafts/${draft.value.id}/`, { ...payload, version: draft.value.version })

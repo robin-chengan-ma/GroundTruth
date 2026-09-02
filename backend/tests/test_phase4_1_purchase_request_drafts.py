@@ -1,9 +1,11 @@
+import json
 from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.utils import timezone
 
+from apps.audit.models import AuditLog
 from apps.core.models import Permission, RolePermission, UserRole
 from apps.crm.models import Supplier
 from apps.erp.models import Product
@@ -16,6 +18,7 @@ from apps.procurement.models import (
     SupplierPriceVersion,
     SupplierProduct,
 )
+from services.candidate_audit_service import create_candidate_token
 
 
 def _grant_draft_permissions(user, role):
@@ -81,6 +84,103 @@ def test_create_multi_item_multi_supplier_draft(api_client, user, role_employee)
     request = PurchaseRequest.objects.get(pk=response.data["id"])
     assert request.items.count() == 2
     assert request.rfqs.get().status == Rfq.Status.DRAFT
+
+
+@pytest.mark.django_db
+def test_create_draft_records_ai_candidate_direct_adoption(api_client, user, role_employee, product, supplier):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+    candidate = {
+        "purpose": "採購辦公椅", "needed_by": None, "currency": "TWD",
+        "supplier_candidates": [{"supplier_id": supplier.id}],
+        "items": [{
+            "product_id": product.id, "quantity": "2", "unit_of_measure": "EA",
+            "specifications": {},
+        }],
+    }
+    candidate_token = create_candidate_token(user.id, candidate)
+
+    response = api_client.post(
+        "/api/v1/purchase-request-drafts/",
+        {
+            "purpose": candidate["purpose"],
+            "needed_by": candidate["needed_by"],
+            "currency": candidate["currency"],
+            "supplier_ids": [supplier.id],
+            "items": [{
+                "product_id": product.id,
+                "quantity": candidate["items"][0]["quantity"],
+                "unit_of_measure": candidate["items"][0]["unit_of_measure"],
+                "specifications": candidate["items"][0]["specifications"],
+            }],
+            "candidate_token": candidate_token,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    event = AuditLog.objects.get(action_type="candidate_confirmed", user=user)
+    assert event.verification_result == "pass"
+    assert "changed_fields" in json.loads(event.masked_payload)
+
+
+@pytest.mark.django_db
+def test_create_draft_records_ai_candidate_correction_without_raw_values(
+    api_client, user, role_employee, product, supplier,
+):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+    candidate_token = create_candidate_token(user.id, {
+        "purpose": "採購辦公椅", "needed_by": None, "currency": "TWD",
+        "supplier_candidates": [{"supplier_id": supplier.id}],
+        "items": [{
+            "product_id": product.id, "quantity": "2", "unit_of_measure": "EA",
+            "specifications": {},
+        }],
+    })
+    response = api_client.post(
+        "/api/v1/purchase-request-drafts/",
+        {
+            "purpose": "修正後用途",
+            "currency": "TWD",
+            "supplier_ids": [supplier.id],
+            "items": [{"product_id": product.id, "quantity": "3"}],
+            "candidate_token": candidate_token,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    event = AuditLog.objects.get(action_type="candidate_confirmed", user=user)
+    assert event.verification_result == "fail"
+    details = json.loads(event.masked_payload)
+    assert set(details["changed_fields"]) >= {"purpose", "items.quantity"}
+    assert "修正後用途" not in str(event.masked_payload)
+
+
+@pytest.mark.django_db
+def test_create_draft_rejects_tampered_candidate_token(
+    api_client, user, role_employee, product, supplier,
+):
+    _grant_draft_permissions(user, role_employee)
+    api_client.force_authenticate(user=user)
+
+    response = api_client.post(
+        "/api/v1/purchase-request-drafts/",
+        {
+            "purpose": "採購辦公椅",
+            "currency": "TWD",
+            "supplier_ids": [supplier.id],
+            "items": [{"product_id": product.id, "quantity": "2"}],
+            "candidate_token": "tampered-candidate-token",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.data["code"] == "invalid_draft"
+    assert PurchaseRequest.objects.count() == 0
+    assert AuditLog.objects.filter(action_type="candidate_confirmed").count() == 0
 
 
 @pytest.mark.django_db

@@ -289,7 +289,9 @@ class RfqRepository:
     def accessible():
         return (
             Rfq.objects.select_related("request")
-            .prefetch_related("invited_suppliers", "scoring_criteria")
+            .prefetch_related(
+                "invited_suppliers__supplier", "scoring_criteria", "request__items__product",
+            )
             .order_by("-created_at", "-id")
         )
 

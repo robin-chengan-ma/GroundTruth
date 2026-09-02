@@ -1,6 +1,6 @@
 ---
 title: API Reference
-updated: 2026-09-01
+updated: 2026-09-02
 ---
 
 # API Reference
@@ -34,8 +34,9 @@ rotation／撤銷狀態，不保存 Token 明文。
 | 資源 | 可視範圍 | 可寫入範圍 |
 | --- | --- | --- |
 | roles、users | admin | admin CRUD；密碼寫入時由後端雜湊 |
-| suppliers、products | 已登入使用者；n8n 可用內部 API Key 唯讀查詢 | 僅 admin 可用通用 CRUD 寫入；內部服務不可寫入 |
-| inventory | 具 `inventory.read`（不可用 `master_data.read` 代替） | 唯讀端點（`ReadOnlyModelViewSet`），無通用寫入 |
+| suppliers、products、product-categories | 已登入使用者；n8n 可用內部 API Key 唯讀查詢 suppliers／products | 讀取需 `master_data.read`、寫入需 `master_data.manage`（`AuthenticatedReadAdminWrite`）；主檔不提供實體刪除，一律回 409 `physical_delete_forbidden`，改用 `is_active` 停用 |
+| inventory | 具 `inventory.read`（不可用 `master_data.read` 代替） | 唯讀端點（`ReadOnlyModelViewSet`）；Phase 1 舊 `Inventory` model（`stock_qty`／`threshold`），`stock_qty` 已停止由正式收貨驗收流程更新，僅供歷史查閱 |
+| inventory-balances、inventory-movements | 具 `inventory.read` | 唯讀端點；FR-10a 真正庫存來源（`InventoryBalance` 查詢快照／`InventoryMovement` 不可覆寫流水帳），Phase 6 起取代舊 `inventory` 端點作為庫存頁面資料來源 |
 | purchase-suggestions | 具 `purchase_suggestion.read`（list／retrieve 專用；convert／dismiss 不套用此權限碼，各自的授權見下方 API 表） | 通用 API 唯讀；具 `purchase_request.create` 可轉單，僅 admin 可忽略未轉單建議 |
 | quotes | legacy 歷史查詢沿用既有本人／角色／admin 範圍 | 通用 API 唯讀；legacy 建單與驗證 command 已停用，撤回 action 待後續切換 |
 | approval-cases、approval-steps | `approval.read_all` 只見有效角色對應案件；`audit.read` 可唯讀全部 | 僅符合目標角色及 permission codes 者可認領／決議；決議理由必填，禁止申請人自簽與跨角色代簽 |
@@ -48,7 +49,42 @@ rotation／撤銷狀態，不保存 Token 明文。
 | quote-requirement-results | 採購人員於報價提交後讀取評估結果 | 只有 `requirement.waive` 可對 fail／not_provided 填理由例外核准 |
 | goods-receipts | 申請人只見自己需求；`receipt.record`、`inspection.decide`、`audit.read` 可見全部 | 只有 `receipt.record` 可建立草稿與送驗；不開放通用更新／刪除 |
 | inspection-variances | `purchase_order.manage`、`receipt.record`、`inspection.decide`、`audit.read` 可唯讀全部 | 只有 `purchase_order.manage` 可建立、修改／刪除草稿與送出；正式案件不可以通用 CRUD 改寫 |
-| manual-review-queue、audit-logs | admin | 複核僅 `claim`／`decide`；audit logs 全部唯讀 |
+| manual-review-queue、audit-logs、audit-dashboard/stats | admin（`audit.read`） | 複核僅 `claim`／`decide`；audit logs 與統計總覽全部唯讀 |
+
+## 主檔管理 API（供應商／品項／分類）
+
+Phase 6 補齊：`SupplierSerializer`／`ProductSerializer` 原本只回傳極少欄位，前端主檔管理頁面
+需要完整欄位才能顯示與編輯；`ProductCategory` model 早已存在（`Product.category` FK），Phase 6
+起才有對應 API。
+
+| Method / Route | 必要權限 | Request／規則 | 成功回應 |
+| --- | --- | --- | --- |
+| `GET／POST /api/v1/suppliers/` | 讀 `master_data.read`／寫 `master_data.manage` | 支援 `?search=<name>` | 200／201；欄位含 `id/name/tier/code/status/tax_id/contact/payment_terms/is_active/created_at/updated_at` |
+| `PATCH／PUT /api/v1/suppliers/{id}/` | `master_data.manage` | 可局部更新任何欄位 | 200 |
+| `DELETE /api/v1/suppliers/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，改用 PATCH `is_active=false` |
+| `GET／POST /api/v1/products/` | 讀 `master_data.read`／寫 `master_data.manage` | 支援 `?search=<name>` | 200／201；欄位含 `id/name/category/category_name/sku/description/specifications/unit_of_measure/is_active/price/currency/updated_at`；`category` 可為 `null` |
+| `PATCH／PUT /api/v1/products/{id}/` | `master_data.manage` | 可局部更新任何欄位 | 200 |
+| `DELETE /api/v1/products/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，改用 PATCH `is_active=false` |
+| `GET／POST /api/v1/product-categories/` | 讀 `master_data.read`／寫 `master_data.manage` | `code`（唯一）、`name`、可選 `spec_schema`（JSON object，供品項規格驗證定義用）、`is_active` | 200／201 |
+| `PATCH /api/v1/product-categories/{id}/` | `master_data.manage` | 可局部更新 | 200 |
+| `DELETE /api/v1/product-categories/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，改用 PATCH `is_active=false` |
+
+無權限回 403，格式錯誤回 400。`contact`／`specifications`／`spec_schema` 皆為自由格式 JSON object。
+
+## 庫存查詢 API
+
+FR-10a：`inventory-balances`／`inventory-movements` 取代 Phase 1 舊 `inventory`（`Inventory` model
+`stock_qty`／`threshold`）作為庫存頁面資料來源——`stock_qty` 已停止由正式收貨驗收流程更新，只有
+`InventoryBalance`（`on_hand_quantity`／`reserved_quantity`／`in_transit_quantity`）與
+`InventoryMovement`（不可覆寫流水帳）才反映目前真實庫存；`threshold`（低於此值觸發採購建議）仍沿用
+舊 `Inventory` 主檔，尚未整併。
+
+| Method / Route | 必要權限 | Request／規則 | 成功回應 |
+| --- | --- | --- | --- |
+| `GET /api/v1/inventory-balances/`／`GET .../{product_id}/` | `inventory.read` | 無 | 200；欄位含 `product/product_name/on_hand_quantity/reserved_quantity/in_transit_quantity/available_quantity/threshold/version/updated_at`；`available_quantity = on_hand - reserved + in_transit`；未建檔的舊 `Inventory.threshold` 回傳 `null` |
+| `GET /api/v1/inventory-movements/`／`GET .../{id}/` | `inventory.read` | 依 `-posted_at,-id` 排序 | 200；欄位含 `id/product/product_name/movement_type/quantity_delta/reference_type/reference_id/affects_balance/reason/posted_at/posted_by/posted_by_name/created_at` |
+
+無讀取權限回 403。
 
 ## 採購需求草稿 API
 
@@ -189,7 +225,7 @@ Quote、Supplier Quote、簽核或採購單。
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
-| `GET /api/v1/rfqs/`／`GET /api/v1/rfqs/{id}/` | `rfq.manage` 或 `audit.read` | 無；一般申請人不開放，僅採購管理與稽核角色可查 | 200 依 `-created_at,-id` 排序的清單／詳情，含受邀供應商與評選標準快照 |
+| `GET /api/v1/rfqs/`／`GET /api/v1/rfqs/{id}/` | `rfq.manage` 或 `audit.read` | 無；一般申請人不開放，僅採購管理與稽核角色可查 | 200 依 `-created_at,-id` 排序的清單／詳情，含受邀供應商與評選標準快照；`invited_suppliers[]` 每筆含 `rfq_supplier_id`（建立報價需要的邀請關係主鍵，非 `supplier_id`）、`supplier_id`、`supplier_name`、`status`、`invited_at`、`responded_at`；`request_no`、`request_purpose`、`request_items[]`（需求明細快照，含 `product_name`／`quantity`／`unit_of_measure`／`specifications`）（皆為 2026-09-02 補上——`PurchaseRequestViewSet.retrieve` 只開放需求本人，採購人員需要靠 RFQ 詳情才能看到別人送出的需求明細與建立報價所需的 `rfq_supplier_id`） |
 | `GET /api/v1/supplier-quotes/`／`GET /api/v1/supplier-quotes/{id}/` | `supplier_quote.manage` 或 `audit.read` | 無 | 200 清單／詳情，含明細與必要條件判定結果 |
 | `GET /api/v1/award-decisions/`／`GET /api/v1/award-decisions/{id}/` | `award.recommend` 或 `audit.read` | 無 | 200 清單／詳情，含得標分配明細 |
 | `POST /api/v1/rfqs/{id}/issue/` | `rfq.manage` | `version`、未來的 ISO 8601 `response_due_at`；只允許 submitted Purchase Request 的 draft RFQ | 200；RFQ 轉 issued、需求轉 sourcing、RFQ version +1 |
@@ -820,6 +856,55 @@ FR-6a／FR-6c：決議案件（核准／駁回），僅提供 SPEC 定義的有�
 **Response（401／403）**：未登入／非管理員。
 
 **Response（409）**：案件尚未認領、已結案，或非本人認領。
+
+## GET /api/v1/audit-dashboard/stats/
+
+SPEC「採購稽核與流程健康總覽」FR-1～5 統計聚合，需 `audit.read`。
+
+**認證／權限**：Bearer Access Token；需 `audit.read`。
+
+**Query Parameters**：`date_from`、`date_to`（皆選填，`YYYY-MM-DD`，套用在各卡片各自的時間欄位；
+格式不合法時視為未提供，不回錯誤）。
+
+**Response（200，假資料）**：
+```json
+{
+  "period": {"from": null, "to": null},
+  "candidate_quality": {
+    "direct_adoption_count": 12, "corrected_count": 3,
+    "direct_adoption_rate_pct": "80.00", "corrections_by_field": {"items.quantity": 2}
+  },
+  "supplier_match": {
+    "supplier_matched_count": 14, "supplier_unmatched_count": 1,
+    "product_matched_count": 20, "product_unmatched_count": 2,
+    "fuzzy_match_total": 5, "fuzzy_match_approved": 3, "fuzzy_match_rejected": 1, "fuzzy_match_pending": 1
+  },
+  "manual_review_queue": {
+    "pending_count": 2, "processed_count": 10,
+    "by_decision": {"approved": 7, "rejected": 3}
+  },
+  "price_anomaly": {
+    "threshold_pct": "20.00", "checked_count": 8, "anomaly_count": 1, "anomaly_rate_pct": "12.50",
+    "items": [
+      {
+        "supplier_quote_item_id": 501, "rfq_no": "RFQ-DEMO-001", "supplier_id": 31,
+        "supplier_name": "範例供應商 A", "product_id": 10, "product_name": "A產品-辦公椅",
+        "unit_price": "150.00", "historical_average": "100.00", "deviation_pct": "50.00", "currency": "TWD"
+      }
+    ]
+  },
+  "quality": {
+    "inspection_count": 6, "accepted_quantity": "48.000",
+    "exception_quantity": "2.000", "acceptance_rate_pct": "96.00"
+  }
+}
+```
+
+`candidate_quality` 只統計帶有效後端簽章候選憑證的首次草稿建立；`supplier_match` 的命中數量來自
+去識別化 `candidate_parsed` 事件。`price_anomaly` 只納入
+正式（`submitted`／`accepted_for_evaluation`／`revised`）`SupplierQuoteItem`，比對
+`PurchaseRequestRepository.historical_average_price`（同供應商＋品項＋幣別的歷史已核准採購單均價），
+門檻沿用 FR-4a 既有 20%，無歷史均價可比對的品項不計入 `checked_count`。無權限回 403。
 
 ## 採購單與簽核 Action
 

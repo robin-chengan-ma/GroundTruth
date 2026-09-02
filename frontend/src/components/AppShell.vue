@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { navigationGroups } from '../navigation'
+import { canAccess, navigationGroups } from '../navigation'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -14,7 +14,9 @@ const visibleGroups = computed(() =>
   navigationGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => auth.hasAllPermissions(item.permissions)),
+      items: group.items.filter((item) =>
+        canAccess(auth.user?.permissions ?? [], item.permissions, item.anyPermissions),
+      ),
     }))
     .filter((group) => group.items.length > 0),
 )

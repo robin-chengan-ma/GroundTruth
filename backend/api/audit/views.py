@@ -8,6 +8,7 @@ from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.audit import AuditLogRepository, ManualReviewQueueRepository
 from schemas.audit import AuditLogSerializer, ManualReviewQueueSerializer
+from services.audit_dashboard_service import compute_dashboard_stats
 from services.manual_review_service import (
     LegacyManualReviewRetiredError,
     ManualReviewConflictError,
@@ -94,6 +95,21 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return AuditLogRepository.all()
+
+
+class AuditDashboardStatsView(APIView):
+    """稽核與正確率總覽（SPEC「稽核與正確率總覽」FR-1～5）統計聚合，僅 admin 可存取。"""
+
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [HasPermissionCode]
+    required_permission = "audit.read"
+
+    def get(self, request):
+        stats = compute_dashboard_stats(
+            date_from=request.query_params.get("date_from"),
+            date_to=request.query_params.get("date_to"),
+        )
+        return Response(stats, status=status.HTTP_200_OK)
 
 
 class MaskTextView(APIView):

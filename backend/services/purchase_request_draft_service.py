@@ -23,6 +23,7 @@ from apps.procurement.models import (
     RfqSupplier,
 )
 from repositories.procurement import PurchaseRequestRepository
+from services.candidate_audit_service import CandidateTokenError, record_candidate_confirmation
 from services.rbac_service import user_has_permission
 
 
@@ -184,6 +185,10 @@ def create_draft(user, payload):
     items, supplier_ids = _validate_payload(payload)
     products = _load_products(items)
     _load_suppliers(supplier_ids)
+    try:
+        record_candidate_confirmation(user, payload.get("candidate_token"), payload)
+    except CandidateTokenError as exc:
+        raise DraftError(str(exc)) from exc
     request = PurchaseRequest.objects.create(
         request_no=f"PR-DRAFT-{uuid4().hex.upper()}",
         requester=user,

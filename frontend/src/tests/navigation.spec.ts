@@ -12,4 +12,10 @@ describe('權限導覽', () => {
     expect(firstAccessiblePath(['manual_review.decide'])).toBe('/reviews')
     expect(firstAccessiblePath([])).toBeNull()
   })
+
+  it('anyPermissions 只需擁有其中之一（例如管理角色或稽核角色皆可讀取 RFQ）', () => {
+    expect(canAccess(['rfq.manage'], [], ['rfq.manage', 'audit.read'])).toBe(true)
+    expect(canAccess(['audit.read'], [], ['rfq.manage', 'audit.read'])).toBe(true)
+    expect(canAccess(['purchase_request.create'], [], ['rfq.manage', 'audit.read'])).toBe(false)
+  })
 })

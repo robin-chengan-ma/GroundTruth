@@ -64,6 +64,22 @@ describe('AppShell', () => {
     expect(wrapper.text()).toContain('AI 人工複核')
   })
 
+  it('稽核角色雖無 rfq.manage，仍可透過 anyPermissions 看到 RFQ 導覽項目', () => {
+    const auth = useAuthStore()
+    auth.user = {
+      id: 4, name: 'Frank', email: 'frank@example.com', role: 'auditor', permissions: ['audit.read'],
+    }
+    const wrapper = mount(AppShell, {
+      global: { stubs: { RouterLink: RouterLinkStub }, mocks: { $route: { path: '/audit-logs' } } },
+    })
+
+    expect(wrapper.text()).toContain('詢價與評選')
+    expect(wrapper.text()).toContain('RFQ')
+    expect(wrapper.text()).toContain('稽核')
+    expect(wrapper.text()).toContain('稽核紀錄')
+    expect(wrapper.text()).not.toContain('主檔管理')
+  })
+
   it('窄螢幕導覽可開啟並以 Escape 關閉', async () => {
     const auth = useAuthStore()
     auth.user = {

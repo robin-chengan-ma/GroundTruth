@@ -3,15 +3,21 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from api.core.permissions import AuthenticatedReadAdminWrite, HasPermissionCode
+from apps.erp.models import ProductCategory
 from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
 from repositories.erp import (
+    InventoryBalanceRepository,
+    InventoryMovementQueryRepository,
     InventoryRepository,
     ProductRepository,
     PurchaseSuggestionRepository,
 )
 from schemas.erp import (
+    InventoryBalanceSerializer,
+    InventoryMovementSerializer,
     InventorySerializer,
+    ProductCategorySerializer,
     ProductSerializer,
     PurchaseSuggestionSerializer,
 )
@@ -188,6 +194,26 @@ class InspectionVarianceViewSet(viewsets.ViewSet):
             return self._error_response(exc)
         return Response(serialize_variance(variance_case))
 
+class ProductCategoryViewSet(viewsets.ModelViewSet):
+    """品項分類與規格定義主檔：僅啟用／停用，不提供實體刪除。"""
+
+    serializer_class = ProductCategorySerializer
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [AuthenticatedReadAdminWrite]
+
+    def get_queryset(self):
+        return ProductCategory.objects.order_by("id")
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {
+                "detail": "品項分類主檔不得實體刪除，請改為停用",
+                "code": "physical_delete_forbidden",
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+
 class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     authentication_classes = [BusinessJwtAuthentication, InternalApiKeyAuthentication]
@@ -218,6 +244,31 @@ class InventoryViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return InventoryRepository.all()
+
+
+class InventoryBalanceViewSet(viewsets.ReadOnlyModelViewSet):
+    """FR-10a：庫存真相來源查詢——on_hand／reserved／in_transit 查詢快照＋門檻。取代
+    Phase 1 舊 InventoryViewSet（stock_qty 已停止由正式收貨驗收流程更新，僅供歷史查閱）。"""
+
+    serializer_class = InventoryBalanceSerializer
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [HasPermissionCode]
+    required_permission = "inventory.read"
+
+    def get_queryset(self):
+        return InventoryBalanceRepository.all()
+
+
+class InventoryMovementViewSet(viewsets.ReadOnlyModelViewSet):
+    """FR-10a：不可覆寫庫存流水帳唯讀查詢。"""
+
+    serializer_class = InventoryMovementSerializer
+    authentication_classes = [BusinessJwtAuthentication]
+    permission_classes = [HasPermissionCode]
+    required_permission = "inventory.read"
+
+    def get_queryset(self):
+        return InventoryMovementQueryRepository.all()
 
 
 class PurchaseSuggestionViewSet(viewsets.ReadOnlyModelViewSet):

@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
+from apps.audit.models import AuditLog
 from apps.core.models import Permission, RolePermission, UserRole
 from apps.procurement.models import PurchaseRequest
 
@@ -28,8 +29,10 @@ def test_parse_candidate_api_uses_authenticated_user_and_does_not_create_documen
     )
 
     assert response.status_code == 200
+    assert response.data["candidate_token"]
     mock_parse.assert_called_once_with("跟優品科技買 5 張辦公椅", user_id=user.id)
     assert PurchaseRequest.objects.count() == 0
+    assert AuditLog.objects.filter(action_type="candidate_parsed", user=user).count() == 1
 
 
 @pytest.mark.django_db

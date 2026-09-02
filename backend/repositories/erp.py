@@ -135,6 +135,20 @@ class InventoryBalanceRepository:
         balance, _ = InventoryBalance.objects.get_or_create(product_id=product_id)
         return InventoryBalance.objects.select_for_update().get(product_id=balance.product_id)
 
+    @staticmethod
+    def all():
+        return InventoryBalance.objects.select_related("product", "product__inventory").order_by(
+            "product_id"
+        )
+
+
+class InventoryMovementQueryRepository:
+    @staticmethod
+    def all():
+        return InventoryMovement.objects.select_related("product", "posted_by").order_by(
+            "-posted_at", "-id"
+        )
+
 
 class QualityInspectionRepository:
     @staticmethod
