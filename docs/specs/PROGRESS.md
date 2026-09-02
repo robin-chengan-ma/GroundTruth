@@ -138,6 +138,7 @@ updated: 2026-09-02
 | 2026-09-02 | 5cf0533 | Phase 6：企業採購操作介面、流程健康總覽與 AI 候選稽核修正 | Claude／Codex／Robin |
 | 2026-09-02 | 3c81036 | fix(phase6)：補齊 10 個清單頁搜尋／篩選／分頁（承接 `5cf0533`／`fddf57f` 之後的缺口），並修正審查發現的 `?category=` 500、品項分類超過 50 筆漏資料、測試文件用詞不準確 3 項缺口，ADR 範圍決策紀錄同步更正 | Claude／Robin |
 | 2026-09-02 | 67a6f9c | fix(phase5)：人工複核核准續傳改由 Django 直接接管，並補齊持久化狀態與重試（含 ②③ 權限碼修正、①續傳改版、Codex 複查 4 項缺口修復、Migration ②、crm／erp migration 相依性附帶修正） | Claude／Codex／Robin |
+| 2026-09-02 | 7a600c8 | feat(phase7)：n8n 正式流程、Gmail 通知（FR-6b／FR-8，含通知連結與角色生效時間判斷修正）、Docker Compose 一鍵啟動（含 demo seed／n8n workflow 自動初始化，Codex 複查建議、Robin 核准） | Claude／Codex／Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
