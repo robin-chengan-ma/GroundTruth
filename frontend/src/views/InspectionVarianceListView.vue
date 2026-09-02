@@ -3,11 +3,14 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { GoodsReceipt, InspectionVarianceActionType, InspectionVarianceCase } from '../types/api'
+import type { GoodsReceipt, InspectionVarianceActionType, InspectionVarianceCase, PaginatedList } from '../types/api'
 import { formatDateTime, formatQuantity } from '../utils/formatters'
+import { fetchAllPages } from '../utils/pagination'
 
 interface CandidateInspection {
   quality_inspection_id: number
@@ -24,12 +27,23 @@ const ACTION_LABELS: Record<InspectionVarianceActionType, string> = {
   replacement: '補交', return: '退貨', credit: '折讓', waive: '免計較',
 }
 
+const VARIANCE_STATUS_OPTIONS = [
+  { value: 'draft', label: '草稿' },
+  { value: 'open', label: '處理中' },
+  { value: 'closed', label: '已結案' },
+  { value: 'cancelled', label: '已取消' },
+]
+
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('purchase_order.manage'))
 
-const cases = ref<InspectionVarianceCase[]>([])
-const loading = ref(true)
-const error = ref('')
+const {
+  items: cases, loading, error, count, totalPages, page, pageSize, search, filters,
+  load: loadCases, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<InspectionVarianceCase>(
+  (params) => api.get<PaginatedList<InspectionVarianceCase>>('/inspection-variances/', { params }).then((res) => res.data),
+  ['status'],
+)
 
 const candidates = ref<CandidateInspection[]>([])
 const candidatesError = ref('')
@@ -37,8 +51,11 @@ const candidatesError = ref('')
 async function loadCandidates() {
   candidatesError.value = ''
   try {
-    const receipts = (await api.get<GoodsReceipt[]>('/goods-receipts/')).data
-    const cased = new Set(cases.value.map((item) => item.quality_inspection_id))
+    const [receipts, allCases] = await Promise.all([
+      fetchAllPages<GoodsReceipt>('/goods-receipts/'),
+      fetchAllPages<InspectionVarianceCase>('/inspection-variances/'),
+    ])
+    const cased = new Set(allCases.map((item) => item.quality_inspection_id))
     const found: CandidateInspection[] = []
     for (const receipt of receipts) {
       for (const item of receipt.items) {
@@ -59,16 +76,7 @@ async function loadCandidates() {
 }
 
 async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    cases.value = (await api.get<InspectionVarianceCase[]>('/inspection-variances/')).data
-  } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入驗收差異案件清單')
-  } finally {
-    loading.value = false
-  }
-  await loadCandidates()
+  await Promise.all([loadCases(), loadCandidates()])
 }
 
 const showDetail = ref(false)
@@ -194,9 +202,18 @@ onMounted(load)
     </template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋驗收差異" placeholder="搜尋收貨單號、品項或供應商…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option v-for="option in VARIANCE_STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="cases.length === 0" class="empty-state">目前沒有驗收差異案件。</p>
+    <p v-else-if="cases.length === 0" class="empty-state">目前沒有符合條件的驗收差異案件。</p>
     <div v-else class="table-scroll">
       <table>
         <thead><tr><th>品項</th><th>供應商</th><th>差異數量</th><th>狀態</th><th>建立人</th><th></th></tr></thead>
@@ -217,6 +234,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="驗收差異分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showDetail && detail" class="modal-backdrop" @click.self="showDetail = false">

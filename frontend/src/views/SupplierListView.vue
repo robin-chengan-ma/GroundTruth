@@ -3,17 +3,23 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { Paginated, Supplier, SupplierStatus, SupplierTier } from '../types/api'
+import type { PaginatedList, Supplier, SupplierStatus, SupplierTier } from '../types/api'
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('master_data.manage'))
 
-const suppliers = ref<Supplier[]>([])
-const loading = ref(true)
-const error = ref('')
+const {
+  items: suppliers, loading, error, count, totalPages, page, pageSize, search, filters,
+  load, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<Supplier>(
+  (params) => api.get<PaginatedList<Supplier>>('/suppliers/', { params }).then((res) => res.data),
+  ['status', 'tier'],
+)
 
 const showForm = ref(false)
 const editingId = ref<number | null>(null)
@@ -41,18 +47,6 @@ function emptyForm(): SupplierFormState {
 }
 
 const form = reactive(emptyForm())
-
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    suppliers.value = (await api.get<Paginated<Supplier>>('/suppliers/')).data.results
-  } catch {
-    error.value = '無法載入供應商清單'
-  } finally {
-    loading.value = false
-  }
-}
 
 function openCreate() {
   editingId.value = null
@@ -133,9 +127,26 @@ onMounted(load)
     </template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋供應商" placeholder="搜尋名稱或內部代碼…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option value="active">active</option>
+        <option value="on_hold">on_hold</option>
+        <option value="blocked">blocked</option>
+      </select>
+      <select aria-label="等級篩選" :value="filters.tier" @change="applyFilter('tier', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部等級</option>
+        <option value="priority">priority</option>
+        <option value="normal">normal</option>
+        <option value="watch">watch</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="suppliers.length === 0" class="empty-state">目前沒有供應商主檔資料。</p>
+    <p v-else-if="suppliers.length === 0" class="empty-state">目前沒有符合條件的供應商主檔資料。</p>
     <div v-else class="table-scroll">
       <table>
         <thead>
@@ -161,6 +172,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="供應商分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showForm" class="modal-backdrop" @click.self="closeForm">

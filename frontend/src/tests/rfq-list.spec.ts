@@ -5,6 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('../api/client', () => ({ api: { get, post } }))
 
+const { replace, route } = vi.hoisted(() => ({
+  replace: vi.fn(),
+  route: { query: {} as Record<string, string> },
+}))
+vi.mock('vue-router', () => ({
+  useRoute: () => route,
+  useRouter: () => ({ replace }),
+}))
+
 import { useAuthStore } from '../stores/auth'
 import RfqListView from '../views/RfqListView.vue'
 
@@ -22,35 +31,68 @@ const rfq = {
   created_at: '', updated_at: '',
 }
 
+function mockList(items = [rfq]) {
+  get.mockResolvedValue({ data: { count: items.length, page: 1, page_size: 20, total_pages: 1, results: items } })
+}
+
 describe('RfqListView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    route.query = {}
     const auth = useAuthStore()
     auth.user = { id: 1, name: 'PM', email: 'pm@example.com', role: 'manager', permissions: ['rfq.manage'] }
   })
 
   it('顯示 RFQ 清單', async () => {
-    get.mockResolvedValue({ data: [rfq] })
+    mockList()
     const wrapper = mount(RfqListView)
     await flushPromises()
 
-    expect(get).toHaveBeenCalledWith('/rfqs/')
+    expect(get).toHaveBeenCalledWith('/rfqs/', { params: { page: 1, page_size: 20 } })
     expect(wrapper.text()).toContain('RFQ-001')
     expect(wrapper.text()).toContain('PR-002')
   })
 
+  it('搜尋 RFQ 時帶入 search 查詢參數並回到第一頁', async () => {
+    mockList([])
+    const wrapper = mount(RfqListView)
+    await flushPromises()
+
+    await wrapper.get('input[aria-label="搜尋 RFQ"]').setValue('RFQ-001')
+    await wrapper.get('form.filter-bar').trigger('submit.prevent')
+
+    expect(replace).toHaveBeenCalledWith({ query: { page: '1', page_size: '20', search: 'RFQ-001' } })
+  })
+
+  it('依狀態篩選時帶入 status 查詢參數', async () => {
+    mockList([])
+    const wrapper = mount(RfqListView)
+    await flushPromises()
+
+    await wrapper.get('select[aria-label="狀態篩選"]').setValue('issued')
+
+    expect(replace).toHaveBeenCalledWith({ query: { page: '1', page_size: '20', status: 'issued' } })
+  })
+
+  it('沒有符合條件的 RFQ 時顯示對應空狀態文字', async () => {
+    mockList([])
+    const wrapper = mount(RfqListView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('目前沒有符合條件的 RFQ 資料。')
+  })
+
   it('點擊詳情後可發出草稿 RFQ', async () => {
-    get.mockResolvedValue({ data: [rfq] })
+    mockList()
     post.mockResolvedValue({ data: { ...rfq, status: 'issued' } })
     const wrapper = mount(RfqListView)
     await flushPromises()
 
-    await wrapper.get('button').trigger('click') // 重新整理，略過
     const detailButton = wrapper.findAll('button').find((btn) => btn.text() === '查看詳情')
     await detailButton?.trigger('click')
     await wrapper.get('#rfq-due-at').setValue('2026-12-01T10:00')
-    await wrapper.get('form').trigger('submit.prevent')
+    await wrapper.get('.detail-modal form').trigger('submit.prevent')
     await flushPromises()
 
     expect(post).toHaveBeenCalledWith('/rfqs/3/issue/', {
@@ -60,7 +102,7 @@ describe('RfqListView', () => {
 
   it('執行評選會呼叫 evaluate 並顯示比較結果', async () => {
     const issuedRfq = { ...rfq, status: 'issued' }
-    get.mockResolvedValue({ data: [issuedRfq] })
+    mockList([issuedRfq])
     post.mockResolvedValue({
       data: {
         rfq_id: 3, rfq_no: 'RFQ-001', status: 'evaluating', comparison_basis: '逐項比較',

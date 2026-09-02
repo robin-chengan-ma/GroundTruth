@@ -56,7 +56,7 @@ def test_rfq_list_and_retrieve_visible_with_rfq_manage(api_client, user, role_em
     detail_resp = api_client.get(f"/api/v1/rfqs/{rfq.id}/")
 
     assert list_resp.status_code == 200
-    assert rfq.id in [row["id"] for row in list_resp.data]
+    assert rfq.id in [row["id"] for row in list_resp.data["results"]]
     assert detail_resp.status_code == 200
     assert detail_resp.data["id"] == rfq.id
     assert detail_resp.data["request_id"] == request.id
@@ -108,7 +108,7 @@ def test_supplier_quote_list_and_retrieve_visible_with_supplier_quote_manage(
     detail_resp = api_client.get(f"/api/v1/supplier-quotes/{quote.id}/")
 
     assert list_resp.status_code == 200
-    assert quote.id in [row["id"] for row in list_resp.data]
+    assert quote.id in [row["id"] for row in list_resp.data["results"]]
     assert detail_resp.status_code == 200
     assert detail_resp.data["id"] == quote.id
 
@@ -145,7 +145,7 @@ def test_award_list_and_retrieve_visible_with_award_recommend(api_client, user, 
     detail_resp = api_client.get(f"/api/v1/award-decisions/{award.id}/")
 
     assert list_resp.status_code == 200
-    assert award.id in [row["id"] for row in list_resp.data]
+    assert award.id in [row["id"] for row in list_resp.data["results"]]
     assert detail_resp.status_code == 200
     assert detail_resp.data["id"] == award.id
     assert detail_resp.data["total_amount_twd"] == "500.00"

@@ -1,8 +1,24 @@
 import importlib
 
 import pytest
+from django.core.management import call_command
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
+
+
+@pytest.fixture(autouse=True)
+def _restore_latest_migrations():
+    """每個測試都會用 MigrationExecutor 把指定 app 手動 migrate 到中間版本，
+    這是真正的 DDL（不在 pytest-django 包住的 transaction 內），不會隨測試結束自動
+    回滾；沒有這個 teardown，被移到中間版本的 app 會一路停在那個版本，直到同一個
+    pytest session 內剛好有後面的測試把它 migrate 得更前面——後面任何用到更新版本
+    schema（例如 `goods_receipt_items.replacement_variance_line_id`）的測試就會
+    在整批執行時噴 `column ... does not exist`，但單獨執行該測試檔卻不會重現。
+    每個測試結束後都強制 migrate 回全部 app 的最新版本，維持與其他測試檔案相同的
+    schema 假設。"""
+    yield
+    call_command("migrate", verbosity=0)
+
 
 ROLLBACK_TARGETS = [
     ("procurement", "0003_backfill_pending_approvals"),

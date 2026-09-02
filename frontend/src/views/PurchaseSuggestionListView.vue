@@ -3,41 +3,55 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { Paginated, Product, PurchaseSuggestion, Supplier } from '../types/api'
+import type { PaginatedList, Product, PurchaseSuggestion, Supplier } from '../types/api'
 import { formatDateTime, formatQuantity } from '../utils/formatters'
 import { fetchAllPages } from '../utils/pagination'
+
+const SUGGESTION_STATUS_OPTIONS = [
+  { value: 'pending', label: '待處理' },
+  { value: 'in_progress', label: '處理中' },
+  { value: 'processed', label: '已轉單' },
+  { value: 'dismissed', label: '已忽略' },
+]
 
 const auth = useAuthStore()
 const canConvert = computed(() => auth.hasPermission('purchase_request.create'))
 const canDismiss = computed(() => auth.isAdmin)
 
-const suggestions = ref<PurchaseSuggestion[]>([])
+const {
+  items: suggestions, loading, error, count, totalPages, page, pageSize, search, filters,
+  load: loadSuggestions, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<PurchaseSuggestion>(
+  (params) => api.get<PaginatedList<PurchaseSuggestion>>('/purchase-suggestions/', { params }).then((res) => res.data),
+  ['status'],
+)
+
 const products = ref<Product[]>([])
 const suppliers = ref<Supplier[]>([])
 const productNameById = computed(() => Object.fromEntries(products.value.map((product) => [product.id, product.name])))
-const loading = ref(true)
-const error = ref('')
+const optionsError = ref('')
 
-async function load() {
-  loading.value = true
-  error.value = ''
+async function loadOptions() {
+  optionsError.value = ''
   try {
-    const [suggestionResponse, productList, supplierList] = await Promise.all([
-      api.get<Paginated<PurchaseSuggestion>>('/purchase-suggestions/'),
+    const [productList, supplierList] = await Promise.all([
       fetchAllPages<Product>('/products/'),
       fetchAllPages<Supplier>('/suppliers/'),
     ])
-    suggestions.value = suggestionResponse.data.results
     products.value = productList
     suppliers.value = supplierList.filter((supplier) => supplier.is_active)
   } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入採購建議清單（需 purchase_suggestion.read 權限）')
-  } finally {
-    loading.value = false
+    optionsError.value = apiErrorMessage(reason, '無法載入品項與供應商下拉選單')
   }
+}
+
+async function load() {
+  await Promise.all([loadSuggestions(), loadOptions()])
 }
 
 // ---- 轉單 ----
@@ -72,7 +86,7 @@ async function submitConvert() {
       currency: convertForm.currency,
     })
     showConvertForm.value = false
-    await load()
+    await loadSuggestions()
   } catch (reason) {
     convertError.value = apiErrorMessage(reason, '轉單失敗')
   } finally {
@@ -84,7 +98,7 @@ async function dismissSuggestion(suggestion: PurchaseSuggestion) {
   error.value = ''
   try {
     await api.post(`/purchase-suggestions/${suggestion.id}/dismiss/`)
-    await load()
+    await loadSuggestions()
   } catch (reason) {
     error.value = apiErrorMessage(reason, '忽略採購建議失敗')
   }
@@ -98,9 +112,19 @@ onMounted(load)
     <template #actions><button class="secondary-button" @click="load">重新整理</button></template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋採購建議" placeholder="搜尋品項名稱…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option v-for="option in SUGGESTION_STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
+    <p v-if="optionsError" class="error-message" role="alert">{{ optionsError }}</p>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="suggestions.length === 0" class="empty-state">目前沒有待處理的採購建議。</p>
+    <p v-else-if="suggestions.length === 0" class="empty-state">目前沒有符合條件的採購建議。</p>
     <div v-else class="table-scroll">
       <table>
         <thead><tr><th>品項</th><th>建議數量</th><th>狀態</th><th>建立時間</th><th></th></tr></thead>
@@ -119,6 +143,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="採購建議分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showConvertForm && convertingSuggestion" class="modal-backdrop" @click.self="showConvertForm = false">

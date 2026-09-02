@@ -5,6 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const { get, post, patch } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }))
 vi.mock('../api/client', () => ({ api: { get, post, patch } }))
 
+const { replace, route } = vi.hoisted(() => ({
+  replace: vi.fn(),
+  route: { query: {} as Record<string, string> },
+}))
+vi.mock('vue-router', () => ({
+  useRoute: () => route,
+  useRouter: () => ({ replace }),
+}))
+
 import { useAuthStore } from '../stores/auth'
 import AwardDecisionListView from '../views/AwardDecisionListView.vue'
 
@@ -23,31 +32,65 @@ const award = {
   }],
 }
 
+function mockLists(awardResults = [award], rfqResults = [rfq]) {
+  get.mockImplementation((url: string) => {
+    if (url === '/award-decisions/') {
+      return Promise.resolve({ data: { count: awardResults.length, page: 1, page_size: 20, total_pages: 1, results: awardResults } })
+    }
+    return Promise.resolve({ data: { count: rfqResults.length, page: 1, page_size: 50, total_pages: 1, results: rfqResults } })
+  })
+}
+
 describe('AwardDecisionListView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    route.query = {}
     const auth = useAuthStore()
     auth.user = { id: 1, name: 'PM', email: 'pm@example.com', role: 'manager', permissions: ['award.recommend'] }
   })
 
   it('顯示得標方案清單並解析 RFQ 編號', async () => {
-    get.mockImplementation((url: string) => {
-      if (url === '/award-decisions/') return Promise.resolve({ data: [award] })
-      return Promise.resolve({ data: [rfq] })
-    })
+    mockLists()
     const wrapper = mount(AwardDecisionListView)
     await flushPromises()
 
+    expect(get).toHaveBeenCalledWith('/award-decisions/', { params: { page: 1, page_size: 20 } })
     expect(wrapper.text()).toContain('RFQ-001')
     expect(wrapper.text()).toContain('PM')
   })
 
+  it('搜尋得標方案時帶入 search 查詢參數並回到第一頁', async () => {
+    mockLists([], [])
+    const wrapper = mount(AwardDecisionListView)
+    await flushPromises()
+
+    await wrapper.get('input[aria-label="搜尋得標方案"]').setValue('RFQ-001')
+    await wrapper.get('form.filter-bar').trigger('submit.prevent')
+
+    expect(replace).toHaveBeenCalledWith({ query: { page: '1', page_size: '20', search: 'RFQ-001' } })
+  })
+
+  it('依狀態篩選時帶入 status 查詢參數', async () => {
+    mockLists([], [])
+    const wrapper = mount(AwardDecisionListView)
+    await flushPromises()
+
+    await wrapper.get('select[aria-label="狀態篩選"]').setValue('approved')
+
+    expect(replace).toHaveBeenCalledWith({ query: { page: '1', page_size: '20', status: 'approved' } })
+  })
+
+  it('沒有符合條件的得標方案時顯示對應空狀態文字', async () => {
+    mockLists([], [])
+    const wrapper = mount(AwardDecisionListView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('目前沒有符合條件的得標方案資料。')
+  })
+
   it('提交草稿得標方案呼叫 submit 端點', async () => {
-    get.mockImplementation((url: string) => {
-      if (url === '/award-decisions/') return Promise.resolve({ data: [award] })
-      return Promise.resolve({ data: [rfq] })
-    })
+    mockLists()
     post.mockResolvedValue({ data: {} })
     const wrapper = mount(AwardDecisionListView)
     await flushPromises()
@@ -59,10 +102,7 @@ describe('AwardDecisionListView', () => {
   })
 
   it('新增得標方案：選擇 RFQ 後載入評選結果並依品項送出分配', async () => {
-    get.mockImplementation((url: string) => {
-      if (url === '/award-decisions/') return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [rfq] })
-    })
+    mockLists([], [rfq])
     post.mockImplementation((url: string) => {
       if (url === '/rfqs/3/evaluate/') {
         return Promise.resolve({
@@ -92,7 +132,7 @@ describe('AwardDecisionListView', () => {
 
     expect(post).toHaveBeenCalledWith('/rfqs/3/evaluate/')
     await wrapper.get('select[id^="award-line-supplier-"]').setValue(1)
-    await wrapper.get('form').trigger('submit.prevent')
+    await wrapper.get('.detail-modal form').trigger('submit.prevent')
     await flushPromises()
 
     expect(post).toHaveBeenCalledWith('/award-decisions/', expect.objectContaining({

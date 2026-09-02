@@ -3,11 +3,22 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { Rfq } from '../types/api'
+import type { PaginatedList, Rfq } from '../types/api'
 import { formatDateTime, formatMoney, formatQuantity } from '../utils/formatters'
+
+const RFQ_STATUS_OPTIONS = [
+  { value: 'draft', label: '草稿' },
+  { value: 'issued', label: '已發出' },
+  { value: 'collecting', label: '收件中' },
+  { value: 'evaluating', label: '評選中' },
+  { value: 'closed', label: '已結案' },
+  { value: 'cancelled', label: '已取消' },
+]
 
 interface EvaluationQuoteRow {
   quote_id: number
@@ -54,9 +65,13 @@ interface EvaluationResult {
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('rfq.manage'))
 
-const rfqs = ref<Rfq[]>([])
-const loading = ref(true)
-const error = ref('')
+const {
+  items: rfqs, loading, error, count, totalPages, page, pageSize, search, filters,
+  load, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<Rfq>(
+  (params) => api.get<PaginatedList<Rfq>>('/rfqs/', { params }).then((res) => res.data),
+  ['status'],
+)
 
 const detail = ref<Rfq | null>(null)
 const showDetail = ref(false)
@@ -69,18 +84,6 @@ const issueForm = reactive({ response_due_at: '' })
 const evaluating = ref(false)
 const evaluateError = ref('')
 const evaluation = ref<EvaluationResult | null>(null)
-
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    rfqs.value = (await api.get<Rfq[]>('/rfqs/')).data
-  } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入 RFQ 清單（僅採購管理與稽核角色可查）')
-  } finally {
-    loading.value = false
-  }
-}
 
 function openDetail(rfq: Rfq) {
   detail.value = rfq
@@ -140,9 +143,18 @@ onMounted(load)
     <template #actions><button class="secondary-button" @click="load">重新整理</button></template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋 RFQ" placeholder="搜尋 RFQ 編號、需求編號或受邀供應商…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option v-for="option in RFQ_STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="rfqs.length === 0" class="empty-state">目前沒有 RFQ 資料。</p>
+    <p v-else-if="rfqs.length === 0" class="empty-state">目前沒有符合條件的 RFQ 資料。</p>
     <div v-else class="table-scroll">
       <table>
         <thead><tr><th>RFQ 編號</th><th>需求編號</th><th>用途</th><th>狀態</th><th>回覆截止</th><th>受邀供應商</th><th></th></tr></thead>
@@ -159,6 +171,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="RFQ 分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showDetail && detail" class="modal-backdrop" @click.self="closeDetail">

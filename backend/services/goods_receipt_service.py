@@ -123,12 +123,14 @@ def create_goods_receipt(user, payload):
     return GoodsReceiptRepository.get(receipt.id)
 
 
-def list_accessible_goods_receipts(user):
+def list_accessible_goods_receipts(user, *, search=None, status=None):
     permissions = get_permission_codes(user)
     can_read_all = bool({"receipt.record", "inspection.decide", "audit.read"} & permissions)
     if not can_read_all and "purchase_request.read_own" not in permissions:
         raise GoodsReceiptPermissionDenied("沒有讀取收貨單的權限")
-    return GoodsReceiptRepository.accessible(user_id=user.id, can_read_all=can_read_all)
+    return GoodsReceiptRepository.accessible(
+        user_id=user.id, can_read_all=can_read_all, search=search, status=status
+    )
 
 
 def get_accessible_goods_receipt(user, receipt_id):

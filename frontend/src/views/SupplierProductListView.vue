@@ -3,21 +3,29 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { Product, Supplier, SupplierProduct } from '../types/api'
+import type { PaginatedList, Product, Supplier, SupplierProduct } from '../types/api'
 import { formatDateTime, formatMoney, formatQuantity } from '../utils/formatters'
 import { fetchAllPages } from '../utils/pagination'
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('master_data.manage'))
 
-const items = ref<SupplierProduct[]>([])
 const suppliers = ref<Supplier[]>([])
 const products = ref<Product[]>([])
-const loading = ref(true)
-const error = ref('')
+const optionsError = ref('')
 const expandedId = ref<number | null>(null)
+
+const {
+  items, loading, error, count, totalPages, page, pageSize, search, filters,
+  load: loadItems, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<SupplierProduct>(
+  (params) => api.get<PaginatedList<SupplierProduct>>('/supplier-products/', { params }).then((res) => res.data),
+  ['quality_status', 'is_active'],
+)
 
 function currentPrice(item: SupplierProduct) {
   if (item.price_versions.length === 0) return null
@@ -33,23 +41,22 @@ function currentPrice(item: SupplierProduct) {
   )[0] ?? null
 }
 
-async function load() {
-  loading.value = true
-  error.value = ''
+async function loadOptions() {
+  optionsError.value = ''
   try {
-    const [supplierProductResponse, supplierList, productList] = await Promise.all([
-      api.get<SupplierProduct[]>('/supplier-products/'),
+    const [supplierList, productList] = await Promise.all([
       fetchAllPages<Supplier>('/suppliers/'),
       fetchAllPages<Product>('/products/'),
     ])
-    items.value = supplierProductResponse.data
     suppliers.value = supplierList
     products.value = productList
   } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入供應商品項與價格資料')
-  } finally {
-    loading.value = false
+    optionsError.value = apiErrorMessage(reason, '無法載入供應商與品項下拉選單')
   }
+}
+
+async function load() {
+  await Promise.all([loadItems(), loadOptions()])
 }
 
 function toggleExpand(item: SupplierProduct) {
@@ -114,7 +121,7 @@ async function submitMapping() {
       })
     }
     showMappingForm.value = false
-    await load()
+    await loadItems()
   } catch (reason) {
     mappingFormError.value = apiErrorMessage(reason, '儲存失敗，請確認欄位內容')
   } finally {
@@ -125,7 +132,7 @@ async function submitMapping() {
 async function toggleMappingActive(item: SupplierProduct) {
   try {
     await api.patch(`/supplier-products/${item.id}/`, { is_active: !item.is_active })
-    await load()
+    await loadItems()
   } catch (reason) {
     error.value = apiErrorMessage(reason, '更新狀態失敗')
   }
@@ -164,7 +171,7 @@ async function submitPrice() {
       valid_until: priceForm.valid_until ? new Date(priceForm.valid_until).toISOString() : null,
     })
     showPriceForm.value = false
-    await load()
+    await loadItems()
   } catch (reason) {
     priceFormError.value = apiErrorMessage(reason, '新增價格版本失敗，請確認欄位內容')
   } finally {
@@ -182,10 +189,27 @@ onMounted(load)
       <button v-if="canManage" class="primary-button" @click="openCreateMapping">新增供應商品項</button>
     </template>
   </PageHeader>
+  <p v-if="optionsError" class="error-message" role="alert">{{ optionsError }}</p>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋供應商品項" placeholder="搜尋供應商、品項或供應商料號…" />
+      <select aria-label="品質狀態篩選" :value="filters.quality_status" @change="applyFilter('quality_status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部品質狀態</option>
+        <option value="qualified">qualified</option>
+        <option value="conditional">conditional</option>
+        <option value="blocked">blocked</option>
+      </select>
+      <select aria-label="啟用狀態篩選" :value="filters.is_active" @change="applyFilter('is_active', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部啟用狀態</option>
+        <option value="true">啟用中</option>
+        <option value="false">已停用</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="items.length === 0" class="empty-state">目前沒有供應商品項對應資料。</p>
+    <p v-else-if="items.length === 0" class="empty-state">目前沒有符合條件的供應商品項對應資料。</p>
     <div v-else class="table-scroll">
       <table>
         <thead>
@@ -238,6 +262,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="供應商品項分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showMappingForm" class="modal-backdrop" @click.self="showMappingForm = false">

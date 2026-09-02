@@ -107,3 +107,84 @@ Robin 複驗時發現「五個」被第一版防呆誤判為格式錯誤。根�
 數字。現已在 Django 與 n8n 主／續傳流程加入中文整數轉換，支援零／〇、一至九、兩、十、百、千、
 萬及常用採購量詞；「五個／十五件／兩百個」視為明確數量，「一些／幾個」仍拒絕。新增三個中文
 數量測試並等待 Robin 由 Vue 建立案件複驗。
+
+## 2026-09-02 完整跑 `pytest -q` 時 InspectionVariance／GoodsReceipt 測試偶發噴 column does not exist
+
+**現象**：實作 Phase 6 清單頁分頁缺口（見 `docs/ADR/discuss/phase6.md`）後，單獨執行新測試檔
+`tests/test_phase6_list_pagination.py` 全數通過，但完整跑 `pytest -q`（385 個檔案一起跑）時，
+`test_inspection_variance_list_is_paginated_and_search_matches_receipt_no`／
+`test_inspection_variance_list_filters_by_status` 兩個新測試噴
+`django.db.utils.ProgrammingError: column "replacement_variance_line_id" of relation
+"goods_receipt_items" does not exist`。
+
+**排查過程**：先確認是既有問題而非本次新測試造成——只用兩個完全沒改過的既有檔案
+`tests/test_phase4_1_migrations.py` ＋ `tests/test_phase4_1_inspection_variances.py` 一起跑，
+`test_phase4_1_inspection_variances.py` 內既有測試（`test_open_variance_requires_full_quantity_allocation`
+等 5 個）同樣噴一模一樣的錯誤，證實與本次新增程式碼無關，是既有測試檔案的隔離缺陷。追查
+`test_phase4_1_migrations.py` 逐一測試的寫法，發現每個 `test_*_migration_can_reverse_and_reapply`
+都用 `MigrationExecutor(connection).migrate([...])` 手動把指定 app 前推到「剛好驗證到的那個
+migration」，從未在測試結束後推回最新版本。
+
+**根因**：`MigrationExecutor.migrate()` 是真正的 DDL，不在 pytest-django 包住的 test transaction
+內，不會隨測試結束自動 rollback；`test_variance_close_guard_migration_can_reverse_and_reapply`
+把 `erp` app 手動 migrate 到 `0008_variance_case_close_guard` 後就結束，沒有任何後續測試把
+`erp` app 再往前推（`goods_receipt_items.replacement_variance_line_id` 是 0008 之後才加的欄位），
+導致同一個 pytest session 裡，這個測試之後任何用到該欄位的測試都會撞到「欄位不存在」——但單獨
+執行受影響的測試檔案時，因為沒有先跑過 `test_phase4_1_migrations.py`，不會重現。
+
+**修復方式**：`tests/test_phase4_1_migrations.py` 新增 `autouse=True` 的
+`_restore_latest_migrations` fixture，在每個測試結束後呼叫 `call_command("migrate", verbosity=0)`
+把所有 app 強制推回最新版本，維持與其他測試檔案一致的 schema 假設；沒有修改任何一個測試本身
+驗證的 migration 前推／回滾邏輯。與 Phase 6 清單頁分頁缺口本身的程式碼變更無關，純粹是既有
+Phase 4.1 測試基礎設施缺陷，一併記錄避免下次重新排查。
+
+**驗證方式**：修復後 `tests/test_phase4_1_migrations.py` ＋
+`tests/test_phase4_1_inspection_variances.py` ＋ `tests/test_phase4_1_inspection_variance_api.py`
+共 25 個測試全過；完整 `pytest -q` 380 個測試全過（含本次新增的
+`tests/test_phase6_list_pagination.py` 24 個）。
+
+**未驗證範圍**：無。
+
+## 2026-09-02 Robin 程式碼審查發現：`?category=` 無效值噴 500、品項分類超過 50 筆靜默漏資料
+
+**現象**：Robin 對 Phase 6 清單頁分頁補完（見 `docs/ADR/discuss/phase6.md` 2026-09-02
+「補齊 10 個清單頁的搜尋／篩選／後端分頁」條目）做程式碼審查，回報 3 個問題，其中 2 個是實際
+程式缺陷：(1) `GET /api/v1/products/?category=abc` 這類非數字的 `category` 查詢參數會造成
+未處理的 500，而非可讀的 400；(2) `ProductListView.vue` 的 `loadCategories()` 固定只抓
+`page_size=50` 的第一頁，品項分類超過 50 筆時，第 51 筆以後會同時從「分類清單」與「品項表單的
+分類下拉選單」靜默消失，沒有任何錯誤提示。第 3 個問題是文件用詞不準確（見下方獨立條目風格說明，
+本則只記錄程式缺陷）。
+
+**排查過程**：(1) 追蹤 `ProductViewSet.get_queryset()` → `ProductRepository.all(category_id=...)`
+→ `Product.objects.filter(category_id=<字串>)`：確認 Django 的 FK id filter 不會在 `.filter()`
+呼叫當下驗證型別，而是等 queryset 真正被求值（`Paginator` 內部的 `.count()`／切片）時才嘗試把值
+轉成 `int`，轉換失敗即拋出未被任何地方攔截的 `ValueError`，冒出來變成 500。(2) 確認
+`loadCategories()` 呼叫 `api.get('/product-categories/', { params: { page_size: 50 } })` 且只呼叫
+一次，未依回應的 `total_pages` 續抓，也未使用既有的 `fetchAllPages()` 工具。
+
+**根因**：(1) `ProductViewSet` 沒有在建立／求值 queryset 之前，對 `category` 查詢參數做顯式的
+整數驗證；DRF 的 `get_queryset()` 又不能直接回傳 `Response`，必須在 `list()` 這層攔截。(2) 這是
+本次 Phase 6 分頁補完新引入的迴歸：`loadCategories()` 沿用了補完前「一次抓 50 筆算了」的舊寫法，
+沒有跟進同一批工作已經寫好的 `fetchAllPages()` 分頁抓取工具；`docs/ADR/discuss/phase6.md` 當時還
+把「不做完整分頁」自行標記成已核准的範圍縮減決策，掩蓋了這其實是未核准、未修好的缺口。
+
+**修復方式**：
+1. 新增 `backend/lib/pagination.py::parse_optional_int(raw, *, field_name)`，回傳
+   `(value, error_response)`；`ProductViewSet` 改為在 `list()` action 內先呼叫
+   `parse_optional_int(request.query_params.get("category"), field_name="category")`，驗證失敗立即
+   回傳 400 `{"code": "invalid_pagination"}`，通過後才建立／求值 queryset；`get_queryset()` 內部
+   同樣呼叫 `parse_optional_int` 但只取 value（忽略 error），確保 `retrieve`／`update`／`destroy`
+   等其他 action 共用 `get_queryset()` 時不會因無效參數而整個噴 500（雖然這些 action 目前不會帶
+   `category` 查詢參數，仍維持防禦性寫法）。
+2. `frontend/src/views/ProductListView.vue` 的 `loadCategories()` 改用
+   `fetchAllPages<ProductCategory>('/product-categories/')`，不再受單頁 50 筆上限影響。
+
+**驗證方式**：新增 `test_product_list_filters_by_category`／
+`test_product_list_rejects_non_numeric_category` 兩個後端測試，`pytest -q tests/test_phase6_list_pagination.py`
+全過；`frontend/src/tests/product-list.spec.ts` 新增「品項分類超過一頁時仍會用 fetchAllPages
+抓完整清單」測試，`vitest run src/tests/product-list.spec.ts` 7 個測試全過。完整 Backend／Frontend
+回歸另行執行並記錄於 `docs/specs/PROGRESS.md`。
+
+**未驗證範圍**：Robin 尚未於瀏覽器實機驗證這兩個修復（例如手動建立超過 50 筆分類後開啟品項頁
+確認全部出現在下拉選單）；「Category 是否需要獨立分頁 UI」這個範圍決策本身仍待 Robin 答覆，見
+`docs/ADR/discuss/phase6.md` 對應的 pending 條目。

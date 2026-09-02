@@ -44,9 +44,9 @@ def _require_manage_permission(user):
         raise SupplierProductPermissionDenied("沒有維護供應商品項主檔的權限")
 
 
-def list_supplier_products(user):
+def list_supplier_products(user, *, search=None, quality_status=None, is_active=None):
     _require_read_permission(user)
-    return SupplierProductRepository.all()
+    return SupplierProductRepository.all(search=search, quality_status=quality_status, is_active=is_active)
 
 
 def get_supplier_product(user, pk):

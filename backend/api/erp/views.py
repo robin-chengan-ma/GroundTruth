@@ -1,4 +1,5 @@
-from rest_framework import filters, permissions, status, viewsets
+from django.db.models import Q
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -6,6 +7,7 @@ from api.core.permissions import AuthenticatedReadAdminWrite, HasPermissionCode
 from apps.erp.models import ProductCategory
 from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
+from lib.pagination import paginate_response, parse_optional_bool, parse_optional_int
 from repositories.erp import (
     InventoryBalanceRepository,
     InventoryMovementQueryRepository,
@@ -85,10 +87,18 @@ class GoodsReceiptViewSet(viewsets.ViewSet):
 
     def list(self, request):
         try:
-            receipts = list_accessible_goods_receipts(request.user)
+            receipts = list_accessible_goods_receipts(
+                request.user,
+                search=request.query_params.get("search"),
+                status=request.query_params.get("status"),
+            )
         except GoodsReceiptError as exc:
             return self._error_response(exc)
-        return Response([serialize_goods_receipt(receipt) for receipt in receipts])
+        return paginate_response(
+            request,
+            receipts,
+            serialize=lambda page: [serialize_goods_receipt(receipt) for receipt in page],
+        )
 
     def retrieve(self, request, pk=None):
         try:
@@ -139,10 +149,16 @@ class InspectionVarianceViewSet(viewsets.ViewSet):
 
     def list(self, request):
         try:
-            cases = list_variances(request.user)
+            cases = list_variances(
+                request.user,
+                search=request.query_params.get("search"),
+                status=request.query_params.get("status"),
+            )
         except InspectionVarianceError as exc:
             return self._error_response(exc)
-        return Response([serialize_variance(case) for case in cases])
+        return paginate_response(
+            request, cases, serialize=lambda page: [serialize_variance(case) for case in page]
+        )
 
     def retrieve(self, request, pk=None):
         try:
@@ -202,7 +218,20 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
     permission_classes = [AuthenticatedReadAdminWrite]
 
     def get_queryset(self):
-        return ProductCategory.objects.order_by("id")
+        queryset = ProductCategory.objects.all()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(Q(name__icontains=search) | Q(code__icontains=search))
+        is_active = parse_optional_bool(self.request.query_params.get("is_active"))
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active)
+        return queryset.order_by("id")
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        return paginate_response(
+            request, queryset, serialize=lambda page: self.get_serializer(page, many=True).data
+        )
 
     def destroy(self, request, *args, **kwargs):
         return Response(
@@ -215,14 +244,29 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
 
 
 class ProductViewSet(viewsets.ModelViewSet):
+    """`?search=` 沿用既有慣例（名稱／料號模糊比對），Phase 2 n8n 依名稱查詢產品
+    （只讀 `results[0]`，見 n8n/workflows/inquiry-flow.json）與 Phase 6 品項清單頁共用同一參數。"""
+
     serializer_class = ProductSerializer
     authentication_classes = [BusinessJwtAuthentication, InternalApiKeyAuthentication]
     permission_classes = [AuthenticatedReadAdminWrite]
-    filter_backends = [filters.SearchFilter]
-    search_fields = ["name"]  # 供 Phase 2 n8n 依名稱查詢產品用（?search=A產品）
 
     def get_queryset(self):
-        return ProductRepository.all()
+        category_id, _ = parse_optional_int(self.request.query_params.get("category"), field_name="category")
+        return ProductRepository.all(
+            search=self.request.query_params.get("search"),
+            category_id=category_id,
+            is_active=parse_optional_bool(self.request.query_params.get("is_active")),
+        )
+
+    def list(self, request, *args, **kwargs):
+        _, error = parse_optional_int(request.query_params.get("category"), field_name="category")
+        if error:
+            return error
+        queryset = self.get_queryset()
+        return paginate_response(
+            request, queryset, serialize=lambda page: self.get_serializer(page, many=True).data
+        )
 
     def destroy(self, request, *args, **kwargs):
         return Response(
@@ -286,7 +330,16 @@ class PurchaseSuggestionViewSet(viewsets.ReadOnlyModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
-        return PurchaseSuggestionRepository.all()
+        return PurchaseSuggestionRepository.all(
+            search=self.request.query_params.get("search"),
+            status=self.request.query_params.get("status"),
+        )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        return paginate_response(
+            request, queryset, serialize=lambda page: self.get_serializer(page, many=True).data
+        )
 
     def _error_response(self, exc):
         if isinstance(exc, PurchaseSuggestionNotFound):

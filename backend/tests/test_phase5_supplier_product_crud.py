@@ -57,7 +57,7 @@ def test_create_list_retrieve_and_deactivate(api_client, user, role_employee, su
 
     list_resp = api_client.get("/api/v1/supplier-products/")
     assert list_resp.status_code == 200
-    assert supplier_product_id in [row["id"] for row in list_resp.data]
+    assert supplier_product_id in [row["id"] for row in list_resp.data["results"]]
 
     detail_resp = api_client.get(f"/api/v1/supplier-products/{supplier_product_id}/")
     assert detail_resp.status_code == 200

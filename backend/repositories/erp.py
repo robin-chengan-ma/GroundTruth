@@ -1,4 +1,4 @@
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from apps.erp.models import (
     GoodsReceipt,
@@ -17,8 +17,15 @@ class ProductRepository:
     model = Product
 
     @staticmethod
-    def all():
-        return Product.objects.order_by("id")
+    def all(*, search=None, category_id=None, is_active=None):
+        queryset = Product.objects.select_related("category")
+        if search:
+            queryset = queryset.filter(Q(name__icontains=search) | Q(sku__icontains=search))
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active)
+        return queryset.order_by("id")
 
     @staticmethod
     def get(pk):
@@ -47,10 +54,15 @@ class PurchaseSuggestionRepository:
     model = PurchaseSuggestion
 
     @staticmethod
-    def all():
-        return PurchaseSuggestion.objects.select_related(
+    def all(*, search=None, status=None):
+        queryset = PurchaseSuggestion.objects.select_related(
             "product", "source_movement", "purchase_request"
-        ).order_by("id")
+        )
+        if search:
+            queryset = queryset.filter(product__name__icontains=search)
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.order_by("id")
 
     @staticmethod
     def get_for_update(pk):
@@ -112,7 +124,7 @@ class GoodsReceiptRepository:
         )
 
     @staticmethod
-    def accessible(*, user_id, can_read_all):
+    def accessible(*, user_id, can_read_all, search=None, status=None):
         queryset = GoodsReceipt.objects.select_related(
             "purchase_order__award__rfq__request__requester",
             "purchase_order__supplier",
@@ -122,7 +134,15 @@ class GoodsReceiptRepository:
             queryset = queryset.filter(
                 purchase_order__award__rfq__request__requester_id=user_id
             )
-        return queryset.order_by("-created_at", "-id")
+        if search:
+            queryset = queryset.filter(
+                Q(receipt_no__icontains=search)
+                | Q(purchase_order__po_no__icontains=search)
+                | Q(purchase_order__supplier__name__icontains=search)
+            )
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.distinct().order_by("-created_at", "-id")
 
     @staticmethod
     def next_sequence_for_purchase_order(purchase_order_id):
@@ -185,8 +205,19 @@ class InspectionVarianceRepository:
         return cls._queryset().select_for_update(of=("self",)).get(pk=pk)
 
     @classmethod
-    def all(cls):
-        return cls._queryset().order_by("-created_at", "-id")
+    def all(cls, *, search=None, status=None):
+        queryset = cls._queryset()
+        if search:
+            queryset = queryset.filter(
+                Q(quality_inspection__receipt_item__receipt__receipt_no__icontains=search)
+                | Q(quality_inspection__receipt_item__purchase_order_item__product__name__icontains=search)
+                | Q(
+                    quality_inspection__receipt_item__receipt__purchase_order__supplier__name__icontains=search
+                )
+            )
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.distinct().order_by("-created_at", "-id")
 
     @staticmethod
     def create_case(**fields):

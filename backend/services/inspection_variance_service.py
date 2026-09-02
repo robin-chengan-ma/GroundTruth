@@ -122,9 +122,9 @@ def create_variance_draft(user, payload):
     return InspectionVarianceRepository.get(variance_case.id)
 
 
-def list_variances(user):
+def list_variances(user, *, search=None, status=None):
     _require_read(user)
-    return InspectionVarianceRepository.all()
+    return InspectionVarianceRepository.all(search=search, status=status)
 
 
 def get_variance(user, variance_id):

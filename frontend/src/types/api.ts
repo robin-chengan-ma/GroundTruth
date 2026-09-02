@@ -146,6 +146,15 @@ export interface PaginatedPurchaseRequests {
   total_pages: number
   results: PurchaseRequestSummary[]
 }
+/** Phase 6 補齊清單頁分頁缺口共用的分頁回應形狀，與 `/purchase-requests/`（PaginatedPurchaseRequests）
+ * 一致：`{count, page, page_size, total_pages, results}`，由 `backend/lib/pagination.py` 統一產生。 */
+export interface PaginatedList<T> {
+  count: number
+  page: number
+  page_size: 10 | 20 | 50
+  total_pages: number
+  results: T[]
+}
 export interface PurchaseRequestDetail {
   id: number
   request_no: string

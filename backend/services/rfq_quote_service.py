@@ -414,9 +414,9 @@ def _require_rfq_read_permission(user):
         raise RfqQuotePermissionDenied("沒有讀取 RFQ 的權限")
 
 
-def list_accessible_rfqs(user):
+def list_accessible_rfqs(user, *, search=None, status=None):
     _require_rfq_read_permission(user)
-    return RfqRepository.accessible()
+    return RfqRepository.accessible(search=search, status=status)
 
 
 def get_accessible_rfq(user, pk):
@@ -435,9 +435,9 @@ def _require_supplier_quote_read_permission(user):
         raise RfqQuotePermissionDenied("沒有讀取供應商報價的權限")
 
 
-def list_accessible_quotes(user):
+def list_accessible_quotes(user, *, search=None, status=None):
     _require_supplier_quote_read_permission(user)
-    return SupplierQuoteRepository.accessible()
+    return SupplierQuoteRepository.accessible(search=search, status=status)
 
 
 def get_accessible_quote(user, pk):

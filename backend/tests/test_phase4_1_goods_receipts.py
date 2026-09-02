@@ -254,6 +254,6 @@ def test_receipt_visibility_is_own_request_or_receiving_or_audit_permission(
     denied = api_client.get("/api/v1/goods-receipts/")
 
     assert created.status_code == 201
-    assert [row["id"] for row in owner_result.data] == [created.data["id"]]
-    assert [row["id"] for row in audit_result.data] == [created.data["id"]]
+    assert [row["id"] for row in owner_result.data["results"]] == [created.data["id"]]
+    assert [row["id"] for row in audit_result.data["results"]] == [created.data["id"]]
     assert denied.status_code == 403

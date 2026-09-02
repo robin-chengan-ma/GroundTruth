@@ -241,9 +241,9 @@ def test_po_list_visibility_is_own_request_or_business_permission(
     denied_response = api_client.get("/api/v1/purchase-orders/")
 
     assert owner_response.status_code == 200
-    assert [row["award_id"] for row in owner_response.data] == [award.id]
+    assert [row["award_id"] for row in owner_response.data["results"]] == [award.id]
     assert manager_response.status_code == 200
-    assert [row["award_id"] for row in manager_response.data] == [award.id]
+    assert [row["award_id"] for row in manager_response.data["results"]] == [award.id]
     assert denied_response.status_code == 403
 
 

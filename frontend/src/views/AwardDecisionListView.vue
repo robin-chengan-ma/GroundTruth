@@ -3,11 +3,22 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { AwardDecision, Rfq } from '../types/api'
+import type { AwardDecision, PaginatedList, Rfq } from '../types/api'
 import { formatDateTime, formatMoney, formatQuantity } from '../utils/formatters'
+import { fetchAllPages } from '../utils/pagination'
+
+const AWARD_STATUS_OPTIONS = [
+  { value: 'draft', label: '草稿' },
+  { value: 'submitted', label: '已提交' },
+  { value: 'approved', label: '已核准' },
+  { value: 'rejected', label: '已駁回' },
+  { value: 'cancelled', label: '已取消' },
+]
 
 interface EvaluationQuoteRow {
   quote_id: number
@@ -48,27 +59,27 @@ interface LineForm {
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('award.recommend'))
 
-const awards = ref<AwardDecision[]>([])
+const {
+  items: awards, loading, error, count, totalPages, page, pageSize, search, filters,
+  load: loadAwards, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<AwardDecision>(
+  (params) => api.get<PaginatedList<AwardDecision>>('/award-decisions/', { params }).then((res) => res.data),
+  ['status'],
+)
+
 const rfqs = ref<Rfq[]>([])
 const rfqNameById = computed(() => Object.fromEntries(rfqs.value.map((rfq) => [rfq.id, rfq.rfq_no])))
-const loading = ref(true)
-const error = ref('')
+
+async function loadRfqs() {
+  try {
+    rfqs.value = await fetchAllPages<Rfq>('/rfqs/')
+  } catch {
+    rfqs.value = []
+  }
+}
 
 async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    const [awardResponse, rfqResponse] = await Promise.all([
-      api.get<AwardDecision[]>('/award-decisions/'),
-      api.get<Rfq[]>('/rfqs/').catch(() => ({ data: [] as Rfq[] })),
-    ])
-    awards.value = awardResponse.data
-    rfqs.value = rfqResponse.data
-  } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入得標方案清單（僅採購管理與稽核角色可查）')
-  } finally {
-    loading.value = false
-  }
+  await Promise.all([loadAwards(), loadRfqs()])
 }
 
 const availableRfqs = computed(() => {
@@ -203,9 +214,18 @@ onMounted(load)
     </template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋得標方案" placeholder="搜尋 RFQ 編號或需求編號…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option v-for="option in AWARD_STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="awards.length === 0" class="empty-state">目前沒有得標方案資料。</p>
+    <p v-else-if="awards.length === 0" class="empty-state">目前沒有符合條件的得標方案資料。</p>
     <div v-else class="table-scroll">
       <table>
         <thead><tr><th>RFQ</th><th>版次</th><th>狀態</th><th>選商人</th><th>總金額(TWD)</th><th>提交時間</th><th></th></tr></thead>
@@ -226,6 +246,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="得標方案分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showDetail && detailAward" class="modal-backdrop" @click.self="showDetail = false">

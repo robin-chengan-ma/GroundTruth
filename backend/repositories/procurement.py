@@ -147,13 +147,21 @@ class PurchaseOrderRepository:
         )
 
     @staticmethod
-    def accessible(*, user_id, can_read_all):
+    def accessible(*, user_id, can_read_all, search=None, status=None):
         queryset = PurchaseOrder.objects.select_related(
             "award__rfq__request__requester", "supplier"
         ).prefetch_related("items__product", "items__award_line__request_item")
         if not can_read_all:
             queryset = queryset.filter(award__rfq__request__requester_id=user_id)
-        return queryset.order_by("-created_at", "-id")
+        if search:
+            queryset = queryset.filter(
+                Q(po_no__icontains=search)
+                | Q(supplier__name__icontains=search)
+                | Q(award__rfq__rfq_no__icontains=search)
+            )
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.distinct().order_by("-created_at", "-id")
 
     @staticmethod
     def statuses_for_request_for_update(request_id):
@@ -260,12 +268,22 @@ class PurchaseRequestRepository:
 
 class SupplierProductRepository:
     @staticmethod
-    def all():
-        return (
+    def all(*, search=None, quality_status=None, is_active=None):
+        queryset = (
             SupplierProduct.objects.select_related("supplier", "product")
             .prefetch_related("price_versions")
-            .order_by("supplier__name", "product__name", "id")
         )
+        if search:
+            queryset = queryset.filter(
+                Q(supplier__name__icontains=search)
+                | Q(product__name__icontains=search)
+                | Q(supplier_sku__icontains=search)
+            )
+        if quality_status:
+            queryset = queryset.filter(quality_status=quality_status)
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active)
+        return queryset.distinct().order_by("supplier__name", "product__name", "id")
 
     @staticmethod
     def get(pk):
@@ -286,14 +304,22 @@ class SupplierProductRepository:
 
 class RfqRepository:
     @staticmethod
-    def accessible():
-        return (
+    def accessible(*, search=None, status=None):
+        queryset = (
             Rfq.objects.select_related("request")
             .prefetch_related(
                 "invited_suppliers__supplier", "scoring_criteria", "request__items__product",
             )
-            .order_by("-created_at", "-id")
         )
+        if search:
+            queryset = queryset.filter(
+                Q(rfq_no__icontains=search)
+                | Q(request__request_no__icontains=search)
+                | Q(invited_suppliers__supplier__name__icontains=search)
+            )
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.distinct().order_by("-created_at", "-id")
 
     @staticmethod
     def get_for_update(pk):
@@ -322,12 +348,20 @@ class RfqRepository:
 
 class SupplierQuoteRepository:
     @staticmethod
-    def accessible():
-        return (
+    def accessible(*, search=None, status=None):
+        queryset = (
             SupplierQuote.objects.select_related("rfq_supplier__rfq__request", "rfq_supplier__supplier")
             .prefetch_related("items__request_item", "items__requirement_results__requirement")
-            .order_by("-created_at", "-id")
         )
+        if search:
+            queryset = queryset.filter(
+                Q(quote_no__icontains=search)
+                | Q(rfq_supplier__rfq__rfq_no__icontains=search)
+                | Q(rfq_supplier__supplier__name__icontains=search)
+            )
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.distinct().order_by("-created_at", "-id")
 
     @staticmethod
     def invitation_for_update(pk):
@@ -357,15 +391,22 @@ class SupplierQuoteRepository:
 
 class AwardRepository:
     @staticmethod
-    def accessible():
-        return (
+    def accessible(*, search=None, status=None):
+        queryset = (
             AwardDecision.objects.select_related("selected_by", "rfq__request")
             .prefetch_related(
                 "lines__request_item",
                 "lines__supplier_quote_item__supplier_quote__rfq_supplier__supplier",
             )
-            .order_by("-created_at", "-id")
         )
+        if search:
+            queryset = queryset.filter(
+                Q(rfq__rfq_no__icontains=search)
+                | Q(rfq__request__request_no__icontains=search)
+            )
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.distinct().order_by("-created_at", "-id")
 
     @staticmethod
     def rfq_for_award(pk):

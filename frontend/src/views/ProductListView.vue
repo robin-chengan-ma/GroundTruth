@@ -3,34 +3,46 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { Paginated, Product, ProductCategory } from '../types/api'
+import type { PaginatedList, Product, ProductCategory } from '../types/api'
 import { formatMoney } from '../utils/formatters'
+import { fetchAllPages } from '../utils/pagination'
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('master_data.manage'))
 
+// 品項分類是小型參考主檔，不比照品項套用完整的搜尋／篩選／分頁 UI（範圍縮減，待 Robin 核准，
+// 見 docs/ADR/discuss/phase6.md）；但仍必須用 fetchAllPages() 逐頁抓完整清單，不可只取單頁，
+// 否則分類筆數超過一頁時，分類清單本身、品項的分類下拉選單都會靜默漏資料且沒有任何提示。
 const categories = ref<ProductCategory[]>([])
-const products = ref<Product[]>([])
-const loading = ref(true)
-const error = ref('')
+const categoriesLoading = ref(true)
+const categoriesError = ref('')
+
+async function loadCategories() {
+  categoriesLoading.value = true
+  categoriesError.value = ''
+  try {
+    categories.value = await fetchAllPages<ProductCategory>('/product-categories/')
+  } catch {
+    categoriesError.value = '無法載入品項分類'
+  } finally {
+    categoriesLoading.value = false
+  }
+}
+
+const {
+  items: products, loading, error, count, totalPages, page, pageSize, search, filters,
+  load: loadProducts, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<Product>(
+  (params) => api.get<PaginatedList<Product>>('/products/', { params }).then((res) => res.data),
+  ['category', 'is_active'],
+)
 
 async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    const [categoryResponse, productResponse] = await Promise.all([
-      api.get<Paginated<ProductCategory>>('/product-categories/'),
-      api.get<Paginated<Product>>('/products/'),
-    ])
-    categories.value = categoryResponse.data.results
-    products.value = productResponse.data.results
-  } catch {
-    error.value = '無法載入品項與分類主檔'
-  } finally {
-    loading.value = false
-  }
+  await Promise.all([loadCategories(), loadProducts()])
 }
 
 // ---- 品項分類 ----
@@ -66,7 +78,7 @@ async function submitCategory() {
     if (editingCategoryId.value) await api.patch(`/product-categories/${editingCategoryId.value}/`, payload)
     else await api.post('/product-categories/', payload)
     showCategoryForm.value = false
-    await load()
+    await loadCategories()
   } catch (reason) {
     categoryFormError.value = apiErrorMessage(reason, '儲存分類失敗，請確認欄位內容')
   } finally {
@@ -77,9 +89,9 @@ async function submitCategory() {
 async function toggleCategoryActive(category: ProductCategory) {
   try {
     await api.patch(`/product-categories/${category.id}/`, { is_active: !category.is_active })
-    await load()
+    await loadCategories()
   } catch (reason) {
-    error.value = apiErrorMessage(reason, '更新分類狀態失敗')
+    categoriesError.value = apiErrorMessage(reason, '更新分類狀態失敗')
   }
 }
 
@@ -139,7 +151,7 @@ async function submitProduct() {
     if (editingProductId.value) await api.patch(`/products/${editingProductId.value}/`, payload)
     else await api.post('/products/', payload)
     showProductForm.value = false
-    await load()
+    await loadProducts()
   } catch (reason) {
     productFormError.value = apiErrorMessage(reason, '儲存品項失敗，請確認欄位內容')
   } finally {
@@ -150,7 +162,7 @@ async function submitProduct() {
 async function toggleProductActive(product: Product) {
   try {
     await api.patch(`/products/${product.id}/`, { is_active: !product.is_active })
-    await load()
+    await loadProducts()
   } catch (reason) {
     error.value = apiErrorMessage(reason, '更新品項狀態失敗')
   }
@@ -164,61 +176,79 @@ onMounted(load)
     <template #actions><button class="secondary-button" @click="load">重新整理</button></template>
   </PageHeader>
 
-  <p v-if="loading" class="empty-state surface">載入中…</p>
-  <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
+  <section class="detail-section surface" style="margin-bottom: 24px;">
+    <header class="section-heading">
+      <div><span class="eyebrow">品項分類</span><h3>規格定義主檔</h3></div>
+      <button v-if="canManage" class="secondary-button" @click="openCreateCategory">新增分類</button>
+    </header>
+    <p v-if="categoriesLoading" class="empty-state">載入中…</p>
+    <p v-else-if="categoriesError" class="error-message" role="alert">{{ categoriesError }}</p>
+    <p v-else-if="categories.length === 0" class="empty-state">尚未建立任何品項分類。</p>
+    <div v-else class="table-scroll">
+      <table>
+        <thead><tr><th>代碼</th><th>名稱</th><th>啟用</th><th v-if="canManage">操作</th></tr></thead>
+        <tbody>
+          <tr v-for="category in categories" :key="category.id">
+            <td>{{ category.code }}</td>
+            <td>{{ category.name }}</td>
+            <td>{{ category.is_active ? '啟用中' : '已停用' }}</td>
+            <td v-if="canManage">
+              <button class="secondary-button" @click="openEditCategory(category)">編輯</button>
+              <button class="secondary-button" @click="toggleCategoryActive(category)">{{ category.is_active ? '停用' : '啟用' }}</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-  <template v-else>
-    <section class="detail-section surface" style="margin-bottom: 24px;">
-      <header class="section-heading">
-        <div><span class="eyebrow">品項分類</span><h3>規格定義主檔</h3></div>
-        <button v-if="canManage" class="secondary-button" @click="openCreateCategory">新增分類</button>
-      </header>
-      <p v-if="categories.length === 0" class="empty-state">尚未建立任何品項分類。</p>
-      <div v-else class="table-scroll">
-        <table>
-          <thead><tr><th>代碼</th><th>名稱</th><th>啟用</th><th v-if="canManage">操作</th></tr></thead>
-          <tbody>
-            <tr v-for="category in categories" :key="category.id">
-              <td>{{ category.code }}</td>
-              <td>{{ category.name }}</td>
-              <td>{{ category.is_active ? '啟用中' : '已停用' }}</td>
-              <td v-if="canManage">
-                <button class="secondary-button" @click="openEditCategory(category)">編輯</button>
-                <button class="secondary-button" @click="toggleCategoryActive(category)">{{ category.is_active ? '停用' : '啟用' }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="surface table-surface">
-      <header class="section-heading" style="padding: 22px 22px 0;">
-        <div><span class="eyebrow">品項</span><h3>品項主檔</h3></div>
-        <button v-if="canManage" class="primary-button" @click="openCreateProduct">新增品項</button>
-      </header>
-      <p v-if="products.length === 0" class="empty-state">目前沒有品項主檔資料。</p>
-      <div v-else class="table-scroll">
-        <table>
-          <thead><tr><th>名稱</th><th>分類</th><th>內部料號</th><th>單位</th><th>單價</th><th>啟用</th><th v-if="canManage">操作</th></tr></thead>
-          <tbody>
-            <tr v-for="product in products" :key="product.id">
-              <td>{{ product.name }}</td>
-              <td>{{ product.category_name || '—' }}</td>
-              <td>{{ product.sku || '—' }}</td>
-              <td>{{ product.unit_of_measure }}</td>
-              <td>{{ formatMoney(product.price, product.currency) }}</td>
-              <td>{{ product.is_active ? '啟用中' : '已停用' }}</td>
-              <td v-if="canManage">
-                <button class="secondary-button" @click="openEditProduct(product)">編輯</button>
-                <button class="secondary-button" @click="toggleProductActive(product)">{{ product.is_active ? '停用' : '啟用' }}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </template>
+  <section class="surface table-surface">
+    <header class="section-heading" style="padding: 22px 22px 0;">
+      <div><span class="eyebrow">品項</span><h3>品項主檔</h3></div>
+      <button v-if="canManage" class="primary-button" @click="openCreateProduct">新增品項</button>
+    </header>
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋品項" placeholder="搜尋名稱或內部料號…" />
+      <select aria-label="分類篩選" :value="filters.category" @change="applyFilter('category', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部分類</option>
+        <option v-for="category in categories" :key="category.id" :value="String(category.id)">{{ category.name }}</option>
+      </select>
+      <select aria-label="啟用狀態篩選" :value="filters.is_active" @change="applyFilter('is_active', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部啟用狀態</option>
+        <option value="true">啟用中</option>
+        <option value="false">已停用</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
+    <p v-if="loading" class="empty-state">載入中…</p>
+    <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
+    <p v-else-if="products.length === 0" class="empty-state">目前沒有符合條件的品項主檔資料。</p>
+    <div v-else class="table-scroll">
+      <table>
+        <thead><tr><th>名稱</th><th>分類</th><th>內部料號</th><th>單位</th><th>單價</th><th>啟用</th><th v-if="canManage">操作</th></tr></thead>
+        <tbody>
+          <tr v-for="product in products" :key="product.id">
+            <td>{{ product.name }}</td>
+            <td>{{ product.category_name || '—' }}</td>
+            <td>{{ product.sku || '—' }}</td>
+            <td>{{ product.unit_of_measure }}</td>
+            <td>{{ formatMoney(product.price, product.currency) }}</td>
+            <td>{{ product.is_active ? '啟用中' : '已停用' }}</td>
+            <td v-if="canManage">
+              <button class="secondary-button" @click="openEditProduct(product)">編輯</button>
+              <button class="secondary-button" @click="toggleProductActive(product)">{{ product.is_active ? '停用' : '啟用' }}</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="品項分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
+  </section>
 
   <div v-if="showCategoryForm" class="modal-backdrop" @click.self="showCategoryForm = false">
     <section class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="category-form-title">

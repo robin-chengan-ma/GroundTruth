@@ -244,9 +244,9 @@ def _require_read_permission(user):
         raise AwardSelectionPermissionDenied("沒有讀取得標方案的權限")
 
 
-def list_accessible_awards(user):
+def list_accessible_awards(user, *, search=None, status=None):
     _require_read_permission(user)
-    return AwardRepository.accessible()
+    return AwardRepository.accessible(search=search, status=status)
 
 
 def get_accessible_award(user, pk):

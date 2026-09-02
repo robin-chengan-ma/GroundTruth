@@ -3,34 +3,37 @@ import { computed, onMounted, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { PurchaseOrder } from '../types/api'
+import type { PaginatedList, PurchaseOrder } from '../types/api'
 import { formatDateTime, formatMoney, formatQuantity } from '../utils/formatters'
+
+const PURCHASE_ORDER_STATUS_OPTIONS = [
+  { value: 'draft', label: '草稿' },
+  { value: 'issued', label: '已發出' },
+  { value: 'partially_received', label: '部分到貨' },
+  { value: 'received', label: '已到貨' },
+  { value: 'closed', label: '已結案' },
+  { value: 'cancelled', label: '已取消' },
+]
 
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('purchase_order.manage'))
 
-const orders = ref<PurchaseOrder[]>([])
-const loading = ref(true)
-const error = ref('')
+const {
+  items: orders, loading, error, count, totalPages, page, pageSize, search, filters,
+  load, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<PurchaseOrder>(
+  (params) => api.get<PaginatedList<PurchaseOrder>>('/purchase-orders/', { params }).then((res) => res.data),
+  ['status'],
+)
 
 const showDetail = ref(false)
 const detail = ref<PurchaseOrder | null>(null)
 const issuing = ref(false)
-
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    orders.value = (await api.get<PurchaseOrder[]>('/purchase-orders/')).data
-  } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入採購單清單')
-  } finally {
-    loading.value = false
-  }
-}
 
 function openDetail(order: PurchaseOrder) {
   detail.value = order
@@ -61,9 +64,18 @@ onMounted(load)
     <template #actions><button class="secondary-button" @click="load">重新整理</button></template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋採購單" placeholder="搜尋採購單號、供應商或 RFQ 編號…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option v-for="option in PURCHASE_ORDER_STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="orders.length === 0" class="empty-state">目前沒有採購單資料。</p>
+    <p v-else-if="orders.length === 0" class="empty-state">目前沒有符合條件的採購單資料。</p>
     <div v-else class="table-scroll">
       <table>
         <thead><tr><th>採購單號</th><th>需求編號</th><th>供應商</th><th>狀態</th><th>總金額</th><th>發出時間</th><th></th></tr></thead>
@@ -83,6 +95,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="採購單分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showDetail && detail" class="modal-backdrop" @click.self="showDetail = false">

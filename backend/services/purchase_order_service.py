@@ -120,12 +120,14 @@ def create_purchase_orders_for_award(award, actor):
     return created
 
 
-def list_accessible_purchase_orders(user):
+def list_accessible_purchase_orders(user, *, search=None, status=None):
     permissions = get_permission_codes(user)
     can_read_all = bool({"purchase_order.manage", "audit.read"} & permissions)
     if not can_read_all and "purchase_request.read_own" not in permissions:
         raise PurchaseOrderPermissionDenied("沒有讀取採購單的權限")
-    return PurchaseOrderRepository.accessible(user_id=user.id, can_read_all=can_read_all)
+    return PurchaseOrderRepository.accessible(
+        user_id=user.id, can_read_all=can_read_all, search=search, status=status
+    )
 
 
 def get_accessible_purchase_order(user, purchase_order_id):

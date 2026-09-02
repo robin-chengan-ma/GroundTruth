@@ -3,11 +3,23 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { Rfq, RfqInvitedSupplier, RfqRequestItem, SupplierQuote } from '../types/api'
+import type { PaginatedList, Rfq, RfqInvitedSupplier, RfqRequestItem, SupplierQuote } from '../types/api'
 import { formatDateTime, formatMoney, formatQuantity } from '../utils/formatters'
+import { fetchAllPages } from '../utils/pagination'
+
+const QUOTE_STATUS_OPTIONS = [
+  { value: 'draft', label: '草稿' },
+  { value: 'submitted', label: '已提交' },
+  { value: 'accepted_for_evaluation', label: '納入評選' },
+  { value: 'revised', label: '已改版' },
+  { value: 'rejected', label: '已拒絕' },
+  { value: 'expired', label: '已逾期' },
+]
 
 interface ItemLineForm {
   request_item_id: number
@@ -24,31 +36,31 @@ interface ItemLineForm {
 const auth = useAuthStore()
 const canManage = computed(() => auth.hasPermission('supplier_quote.manage'))
 
-const quotes = ref<SupplierQuote[]>([])
+const {
+  items: quotes, loading, error, count, totalPages, page, pageSize, search, filters,
+  load: loadQuotes, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<SupplierQuote>(
+  (params) => api.get<PaginatedList<SupplierQuote>>('/supplier-quotes/', { params }).then((res) => res.data),
+  ['status'],
+)
+
 const rfqs = ref<Rfq[]>([])
 const rfqNameById = computed(() => Object.fromEntries(rfqs.value.map((rfq) => [rfq.id, rfq.rfq_no])))
-const loading = ref(true)
-const error = ref('')
+
+async function loadRfqs() {
+  try {
+    rfqs.value = await fetchAllPages<Rfq>('/rfqs/')
+  } catch {
+    rfqs.value = []
+  }
+}
+
+async function load() {
+  await Promise.all([loadQuotes(), loadRfqs()])
+}
 
 const showDetail = ref(false)
 const detailQuote = ref<SupplierQuote | null>(null)
-
-async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    const [quoteResponse, rfqResponse] = await Promise.all([
-      api.get<SupplierQuote[]>('/supplier-quotes/'),
-      api.get<Rfq[]>('/rfqs/').catch(() => ({ data: [] as Rfq[] })),
-    ])
-    quotes.value = quoteResponse.data
-    rfqs.value = rfqResponse.data
-  } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入供應商報價清單（僅採購管理與稽核角色可查）')
-  } finally {
-    loading.value = false
-  }
-}
 
 function openDetail(quote: SupplierQuote) {
   detailQuote.value = quote
@@ -211,9 +223,18 @@ onMounted(load)
     </template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋供應商報價" placeholder="搜尋報價單號、RFQ 編號或供應商…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option v-for="option in QUOTE_STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="quotes.length === 0" class="empty-state">目前沒有供應商報價資料。</p>
+    <p v-else-if="quotes.length === 0" class="empty-state">目前沒有符合條件的供應商報價資料。</p>
     <div v-else class="table-scroll">
       <table>
         <thead><tr><th>報價單號</th><th>RFQ</th><th>供應商</th><th>狀態</th><th>版次</th><th>總金額(TWD)</th><th>提交時間</th><th></th></tr></thead>
@@ -235,6 +256,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="供應商報價分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showDetail && detailQuote" class="modal-backdrop" @click.self="showDetail = false">

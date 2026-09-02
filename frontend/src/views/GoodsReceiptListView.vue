@@ -3,11 +3,23 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
+import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
-import type { GoodsReceipt, PurchaseOrder } from '../types/api'
+import type { GoodsReceipt, PaginatedList, PurchaseOrder } from '../types/api'
 import { formatDateTime, formatQuantity } from '../utils/formatters'
+import { fetchAllPages } from '../utils/pagination'
+
+const RECEIPT_STATUS_OPTIONS = [
+  { value: 'draft', label: '草稿' },
+  { value: 'inspecting', label: '待驗收' },
+  { value: 'posted', label: '已入庫' },
+  { value: 'partially_accepted', label: '部分合格' },
+  { value: 'rejected', label: '已拒收' },
+  { value: 'voided', label: '已作廢' },
+]
 
 interface ReceiptLineForm {
   purchase_order_item_id: number
@@ -32,26 +44,26 @@ const auth = useAuthStore()
 const canRecord = computed(() => auth.hasPermission('receipt.record'))
 const canInspect = computed(() => auth.hasPermission('inspection.decide'))
 
-const receipts = ref<GoodsReceipt[]>([])
+const {
+  items: receipts, loading, error, count, totalPages, page, pageSize, search, filters,
+  load: loadReceipts, applySearch, applyFilter, resetFilters, changePage, changePageSize,
+} = useListQuery<GoodsReceipt>(
+  (params) => api.get<PaginatedList<GoodsReceipt>>('/goods-receipts/', { params }).then((res) => res.data),
+  ['status'],
+)
+
 const purchaseOrders = ref<PurchaseOrder[]>([])
-const loading = ref(true)
-const error = ref('')
+
+async function loadPurchaseOrders() {
+  try {
+    purchaseOrders.value = await fetchAllPages<PurchaseOrder>('/purchase-orders/')
+  } catch {
+    purchaseOrders.value = []
+  }
+}
 
 async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    const [receiptResponse, orderResponse] = await Promise.all([
-      api.get<GoodsReceipt[]>('/goods-receipts/'),
-      api.get<PurchaseOrder[]>('/purchase-orders/').catch(() => ({ data: [] as PurchaseOrder[] })),
-    ])
-    receipts.value = receiptResponse.data
-    purchaseOrders.value = orderResponse.data
-  } catch (reason) {
-    error.value = apiErrorMessage(reason, '無法載入收貨單清單')
-  } finally {
-    loading.value = false
-  }
+  await Promise.all([loadReceipts(), loadPurchaseOrders()])
 }
 
 const showDetail = ref(false)
@@ -186,9 +198,18 @@ onMounted(load)
     </template>
   </PageHeader>
   <section class="surface table-surface">
+    <form class="filter-bar" @submit.prevent="applySearch">
+      <input v-model="search" type="search" aria-label="搜尋收貨單" placeholder="搜尋收貨單號、採購單號或供應商…" />
+      <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
+        <option value="">全部狀態</option>
+        <option v-for="option in RECEIPT_STATUS_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <button type="submit" class="secondary-button">搜尋</button>
+      <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
+    </form>
     <p v-if="loading" class="empty-state">載入中…</p>
     <p v-else-if="error" class="error-message" role="alert">{{ error }}</p>
-    <p v-else-if="receipts.length === 0" class="empty-state">目前沒有收貨單資料。</p>
+    <p v-else-if="receipts.length === 0" class="empty-state">目前沒有符合條件的收貨單資料。</p>
     <div v-else class="table-scroll">
       <table>
         <thead><tr><th>收貨單號</th><th>採購單</th><th>供應商</th><th>狀態</th><th>收貨人</th><th>收貨時間</th><th></th></tr></thead>
@@ -209,6 +230,11 @@ onMounted(load)
         </tbody>
       </table>
     </div>
+    <ListPagination
+      v-if="!loading && !error"
+      :page="page" :page-size="pageSize" :total-pages="totalPages" :count="count"
+      label="收貨單分頁" @change-page="changePage" @change-page-size="changePageSize"
+    />
   </section>
 
   <div v-if="showDetail && detail" class="modal-backdrop" @click.self="showDetail = false">

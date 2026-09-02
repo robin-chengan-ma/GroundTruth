@@ -9,6 +9,26 @@ updated: 2026-09-02
 > （放 `docs/specs/SPEC.md`）。Phase 4 起 API 已依資源套用 JWT 與角色權限；工作流程資源改為
 > 唯讀清單／明確 action，不再允許用通用 CRUD 任意改寫正式狀態。
 
+## Phase 6 清單分頁／搜尋／篩選共用慣例
+
+SPEC「搜尋、篩選、分頁」缺口補齊：`suppliers`、`products`、`product-categories`、`supplier-products`、
+`rfqs`、`supplier-quotes`、`award-decisions`、`purchase-orders`、`goods-receipts`、
+`inspection-variances`、`purchase-suggestions` 共 11 個清單端點（`GET` list，不含 `retrieve`）統一改用
+`backend/lib/pagination.py` 的分頁工具，回應形狀與既有 `GET /api/v1/purchase-requests/`
+（見下方「本人採購需求清單 API」）一致：
+
+```json
+{ "count": 21, "page": 2, "page_size": 10, "total_pages": 3, "results": [ /* ... */ ] }
+```
+
+`page`（預設 1）、`page_size`（只允許 `10`／`20`／`50`，預設 `20`）為共用 Query Parameter，格式或範圍
+不合法回 400 `invalid_pagination`。各端點另支援 `?search=<關鍵字>`（對應資源的名稱／單號等文字欄位
+`icontains`，見各端點小節）與至少一個精確比對篩選（多為 `?status=<狀態>`，個別端點另有
+`quality_status`／`is_active`／`tier`／`category`），兩者皆可與 `page`／`page_size` 併用，皆為選填、不填
+則不套用該條件。此慣例只套用於清單端點；單筆 `retrieve`、`POST`／`PATCH`／`PUT` 等寫入 action 不受影響。
+其中 `?category=<id>` 是外鍵 id 篩選，帶非整數值（如 `?category=abc`）會在建立查詢條件前先驗證，
+回 400 `invalid_pagination`，不會讓資料庫查詢求值時噴未處理的例外。
+
 ## 認證方式
 
 | 呼叫方 | 端點範圍 | 認證方式 |
@@ -59,13 +79,13 @@ Phase 6 補齊：`SupplierSerializer`／`ProductSerializer` 原本只回傳極�
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
-| `GET／POST /api/v1/suppliers/` | 讀 `master_data.read`／寫 `master_data.manage` | 支援 `?search=<name>` | 200／201；欄位含 `id/name/tier/code/status/tax_id/contact/payment_terms/is_active/created_at/updated_at` |
+| `GET／POST /api/v1/suppliers/` | 讀 `master_data.read`／寫 `master_data.manage` | GET 支援 `page`／`page_size`／`?search=<name 或 code>`／`?status=<active\|on_hold\|blocked>`／`?tier=<priority\|normal\|watch>`（見上方 Phase 6 分頁慣例） | GET 200 分頁清單；POST 201；欄位含 `id/name/tier/code/status/tax_id/contact/payment_terms/is_active/created_at/updated_at` |
 | `PATCH／PUT /api/v1/suppliers/{id}/` | `master_data.manage` | 可局部更新任何欄位 | 200 |
 | `DELETE /api/v1/suppliers/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，改用 PATCH `is_active=false` |
-| `GET／POST /api/v1/products/` | 讀 `master_data.read`／寫 `master_data.manage` | 支援 `?search=<name>` | 200／201；欄位含 `id/name/category/category_name/sku/description/specifications/unit_of_measure/is_active/price/currency/updated_at`；`category` 可為 `null` |
+| `GET／POST /api/v1/products/` | 讀 `master_data.read`／寫 `master_data.manage` | GET 支援 `page`／`page_size`／`?search=<name 或 sku>`／`?category=<category_id>`／`?is_active=<true\|false>`（見上方 Phase 6 分頁慣例；`?search=` 亦供 n8n 依 LLM 解析出的品項名稱查詢，見下方「GET /api/v1/suppliers/?search=、GET /api/v1/products/?search=」） | GET 200 分頁清單；POST 201；欄位含 `id/name/category/category_name/sku/description/specifications/unit_of_measure/is_active/price/currency/updated_at`；`category` 可為 `null` |
 | `PATCH／PUT /api/v1/products/{id}/` | `master_data.manage` | 可局部更新任何欄位 | 200 |
 | `DELETE /api/v1/products/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，改用 PATCH `is_active=false` |
-| `GET／POST /api/v1/product-categories/` | 讀 `master_data.read`／寫 `master_data.manage` | `code`（唯一）、`name`、可選 `spec_schema`（JSON object，供品項規格驗證定義用）、`is_active` | 200／201 |
+| `GET／POST /api/v1/product-categories/` | 讀 `master_data.read`／寫 `master_data.manage` | GET 支援 `page`／`page_size`／`?search=<code 或 name>`／`?is_active=<true\|false>`；POST 需 `code`（唯一）、`name`、可選 `spec_schema`（JSON object，供品項規格驗證定義用）、`is_active` | GET 200 分頁清單；POST 201 |
 | `PATCH /api/v1/product-categories/{id}/` | `master_data.manage` | 可局部更新 | 200 |
 | `DELETE /api/v1/product-categories/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，改用 PATCH `is_active=false` |
 
@@ -212,7 +232,7 @@ Quote、Supplier Quote、簽核或採購單。
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
-| `GET /api/v1/purchase-suggestions/` | `purchase_suggestion.read` | 無；回傳品項、建議數量、狀態、來源 movement 與轉成的 request | 200；全域 `PageNumberPagination`，回傳 `{count,next,previous,results}` |
+| `GET /api/v1/purchase-suggestions/` | `purchase_suggestion.read` | 支援 `page`／`page_size`／`?search=<品項名稱>`／`?status=<pending\|in_progress\|processed\|dismissed>`（見上方 Phase 6 分頁慣例）；回傳品項、建議數量、狀態、來源 movement 與轉成的 request | 200 分頁清單（`{count,page,page_size,total_pages,results}`，Phase 6 起改用共用分頁工具，取代原本的全域 `PageNumberPagination`） |
 | `GET /api/v1/purchase-suggestions/{id}/` | `purchase_suggestion.read` | 通用資源唯讀 | 200 建議詳情 |
 | `POST /api/v1/purchase-suggestions/{id}/convert/` | `purchase_request.create` | `supplier_ids` 為非空、不重複的有效供應商 ID；可傳 `purpose`、`needed_by`、`currency`；僅 pending 且尚未轉單可執行 | 201；建立本人 Purchase Request draft 並回傳 `purchase_request_id` |
 | `POST /api/v1/purchase-suggestions/{id}/dismiss/` | admin | 無；僅 pending 且尚未轉單可執行 | 200；狀態轉 dismissed |
@@ -225,9 +245,9 @@ Quote、Supplier Quote、簽核或採購單。
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
-| `GET /api/v1/rfqs/`／`GET /api/v1/rfqs/{id}/` | `rfq.manage` 或 `audit.read` | 無；一般申請人不開放，僅採購管理與稽核角色可查 | 200 依 `-created_at,-id` 排序的清單／詳情，含受邀供應商與評選標準快照；`invited_suppliers[]` 每筆含 `rfq_supplier_id`（建立報價需要的邀請關係主鍵，非 `supplier_id`）、`supplier_id`、`supplier_name`、`status`、`invited_at`、`responded_at`；`request_no`、`request_purpose`、`request_items[]`（需求明細快照，含 `product_name`／`quantity`／`unit_of_measure`／`specifications`）（皆為 2026-09-02 補上——`PurchaseRequestViewSet.retrieve` 只開放需求本人，採購人員需要靠 RFQ 詳情才能看到別人送出的需求明細與建立報價所需的 `rfq_supplier_id`） |
-| `GET /api/v1/supplier-quotes/`／`GET /api/v1/supplier-quotes/{id}/` | `supplier_quote.manage` 或 `audit.read` | 無 | 200 清單／詳情，含明細與必要條件判定結果 |
-| `GET /api/v1/award-decisions/`／`GET /api/v1/award-decisions/{id}/` | `award.recommend` 或 `audit.read` | 無 | 200 清單／詳情，含得標分配明細 |
+| `GET /api/v1/rfqs/`／`GET /api/v1/rfqs/{id}/` | `rfq.manage` 或 `audit.read` | 清單支援 `page`／`page_size`／`?search=<RFQ 編號、需求編號或受邀供應商名稱>`／`?status=<draft\|issued\|collecting\|evaluating\|closed\|cancelled>`（見上方 Phase 6 分頁慣例）；一般申請人不開放，僅採購管理與稽核角色可查 | 清單 200 分頁結果（依 `-created_at,-id` 排序）；詳情 200，含受邀供應商與評選標準快照；`invited_suppliers[]` 每筆含 `rfq_supplier_id`（建立報價需要的邀請關係主鍵，非 `supplier_id`）、`supplier_id`、`supplier_name`、`status`、`invited_at`、`responded_at`；`request_no`、`request_purpose`、`request_items[]`（需求明細快照，含 `product_name`／`quantity`／`unit_of_measure`／`specifications`）（皆為 2026-09-02 補上——`PurchaseRequestViewSet.retrieve` 只開放需求本人，採購人員需要靠 RFQ 詳情才能看到別人送出的需求明細與建立報價所需的 `rfq_supplier_id`） |
+| `GET /api/v1/supplier-quotes/`／`GET /api/v1/supplier-quotes/{id}/` | `supplier_quote.manage` 或 `audit.read` | 清單支援 `page`／`page_size`／`?search=<報價單號、RFQ 編號或供應商名稱>`／`?status=<draft\|submitted\|accepted_for_evaluation\|revised\|rejected\|expired>` | 清單 200 分頁結果／詳情 200，含明細與必要條件判定結果 |
+| `GET /api/v1/award-decisions/`／`GET /api/v1/award-decisions/{id}/` | `award.recommend` 或 `audit.read` | 清單支援 `page`／`page_size`／`?search=<RFQ 編號或需求編號>`／`?status=<draft\|submitted\|approved\|rejected\|cancelled>` | 清單 200 分頁結果／詳情 200，含得標分配明細 |
 | `POST /api/v1/rfqs/{id}/issue/` | `rfq.manage` | `version`、未來的 ISO 8601 `response_due_at`；只允許 submitted Purchase Request 的 draft RFQ | 200；RFQ 轉 issued、需求轉 sourcing、RFQ version +1 |
 | `POST /api/v1/supplier-quotes/` | `supplier_quote.manage` | `rfq_supplier_id`、幣別、匯率及一至多筆報價明細；RFQ 必須仍在收件期限內 | 201 報價草稿 |
 | `POST /api/v1/supplier-quotes/{id}/submit/` | `supplier_quote.manage` | 無 Body；後端重新檢查 RFQ／報價期限並產生條件結果 | 200；報價轉 submitted、邀請轉 responded |
@@ -394,7 +414,7 @@ RFQ 發出時建立六項案件快照：實際總成本 30%、規格與品質 30
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
-| `GET /api/v1/supplier-products/` | `master_data.read` | 無 | 200 依供應商／品項名稱排序的清單，含各筆 `price_versions` |
+| `GET /api/v1/supplier-products/` | `master_data.read` | 支援 `page`／`page_size`／`?search=<供應商名稱、品項名稱或 supplier_sku>`／`?quality_status=<qualified\|conditional\|blocked>`／`?is_active=<true\|false>`（見上方 Phase 6 分頁慣例） | 200 分頁清單（依供應商／品項名稱排序），含各筆 `price_versions` |
 | `GET /api/v1/supplier-products/{id}/` | `master_data.read` | 無 | 200 詳情 |
 | `POST /api/v1/supplier-products/` | `master_data.manage` | `supplier`、`product`（皆須為現行啟用中）；可選 `supplier_sku`、`lead_time_days`（預設 0）、`minimum_order_quantity`（預設 1）、`quality_status`（`qualified`／`conditional`／`blocked`，預設 `qualified`） | 201；同一供應商＋品項已存在關係回 409 |
 | `PATCH /api/v1/supplier-products/{id}/` | `master_data.manage` | 可局部更新 `supplier_sku`、`lead_time_days`、`minimum_order_quantity`、`quality_status`、`is_active` | 200 |
@@ -479,7 +499,9 @@ API，目前尚未提供修改既有版本 `valid_until` 的獨立 command，屬
 
 **認證／權限**：Bearer Access Token。具 `purchase_request.read_own` 者只能查看自己需求產生的 PO；具 `purchase_order.manage` 或 `audit.read` 者可唯讀查看全部。其他使用者回 403。
 
-成功回 200 與 PO 陣列，包含單號、需求、得標方案、供應商、狀態、幣別、總額、版本及不可變明細快照。
+**Query Parameters**：`page`／`page_size`／`?search=<PO 單號、供應商名稱或 RFQ 編號>`／`?status=<draft\|issued\|partially_received\|received\|closed\|cancelled>`（見上方 Phase 6 分頁慣例，皆選填）。
+
+成功回 200 分頁結果（`{count,page,page_size,total_pages,results}`），`results` 為 PO 陣列，包含單號、需求、得標方案、供應商、狀態、幣別、總額、版本及不可變明細快照。
 
 ### GET `/api/v1/purchase-orders/{id}/`
 
@@ -527,6 +549,8 @@ API，目前尚未提供修改既有版本 `valid_until` 的獨立 command，屬
 ### GET `/api/v1/goods-receipts/`／GET `/api/v1/goods-receipts/{id}/`
 
 **認證／權限**：Bearer Access Token。具 `purchase_request.read_own` 者只能查看自己需求的收貨單；具 `receipt.record`、`inspection.decide` 或 `audit.read` 者可唯讀查看全部。無讀取權限回 403，資源不存在或不在可視範圍回 404。
+
+**清單 Query Parameters**：`page`／`page_size`／`?search=<收貨單號、PO 單號或供應商名稱>`／`?status=<draft\|inspecting\|posted\|partially_accepted\|rejected\|voided>`（見上方 Phase 6 分頁慣例，皆選填）；清單回應為 `{count,page,page_size,total_pages,results}`。
 
 ### POST `/api/v1/goods-receipts/`
 
@@ -584,6 +608,8 @@ API，目前尚未提供修改既有版本 `valid_until` 的獨立 command，屬
 ### GET `/api/v1/inspection-variances/`／GET `/api/v1/inspection-variances/{id}/`
 
 **認證／權限**：Bearer Access Token；具 `purchase_order.manage`、`receipt.record`、`inspection.decide` 或 `audit.read` 可唯讀全部。回應包含驗收、收貨、PO、供應商、品項、差異總數、案件狀態／version／actor/time 及處理明細。無讀取權限回 403，不存在回 404。
+
+**清單 Query Parameters**：`page`／`page_size`／`?search=<收貨單號、品項名稱或供應商名稱>`／`?status=<draft\|open\|closed\|cancelled>`（見上方 Phase 6 分頁慣例，皆選填）；清單回應為 `{count,page,page_size,total_pages,results}`。
 
 ### POST `/api/v1/inspection-variances/`
 
@@ -726,7 +752,11 @@ X-Internal-Api-Key: <INTERNAL_API_KEY>
 
 ## GET /api/v1/suppliers/?search=<name> 、 GET /api/v1/products/?search=<name>
 
-Phase 2 新增 `SearchFilter`（`search_fields=["name"]`），供 n8n 依 LLM 解析出的供應商/產品名稱做查詢，屬既有 CRUD 端點的行為擴充，不是新端點。
+Phase 2 新增，供 n8n 依 LLM 解析出的供應商/產品名稱做查詢，屬既有 CRUD 端點的行為擴充，不是新端點。
+Phase 6 起 `?search=` 改由上方「Phase 6 清單分頁／搜尋／篩選共用慣例」的 `backend/lib/pagination.py`
+統一處理（供應商比對 `name`／`code`，品項比對 `name`／`sku`，取代原本的 DRF `SearchFilter`）；n8n
+呼叫方只讀 `results[0]`，不受回應改為 `{count,page,page_size,total_pages,results}` 分頁信封影響（見
+`n8n/workflows/inquiry-flow.json`）。
 
 ## POST /api/v1/masking/mask/
 

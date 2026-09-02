@@ -171,7 +171,7 @@ def test_only_buyer_manages_variance_while_operational_roles_and_auditor_read(
     audit_detail = api_client.get(f"/api/v1/inspection-variances/{created.data['id']}/")
 
     assert inspector_list.status_code == 200
-    assert inspector_list.data[0]["id"] == created.data["id"]
+    assert inspector_list.data["results"][0]["id"] == created.data["id"]
     assert inspector_write.status_code == 403
     assert audit_detail.status_code == 200
 

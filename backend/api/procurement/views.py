@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
+from lib.pagination import paginate_response, parse_optional_bool
 from repositories.procurement import ApprovalRepository, QuoteRepository
 from schemas.procurement import (
     ApprovalSerializer,
@@ -152,10 +153,16 @@ class AwardDecisionViewSet(viewsets.ViewSet):
 
     def list(self, request):
         try:
-            awards = list_accessible_awards(request.user)
+            awards = list_accessible_awards(
+                request.user,
+                search=request.query_params.get("search"),
+                status=request.query_params.get("status"),
+            )
         except AwardSelectionError as exc:
             return self._error_response(exc)
-        return Response([serialize_award(award) for award in awards])
+        return paginate_response(
+            request, awards, serialize=lambda page: [serialize_award(award) for award in page]
+        )
 
     def retrieve(self, request, pk=None):
         try:
@@ -262,10 +269,18 @@ class PurchaseOrderViewSet(viewsets.ViewSet):
 
     def list(self, request):
         try:
-            purchase_orders = list_accessible_purchase_orders(request.user)
+            purchase_orders = list_accessible_purchase_orders(
+                request.user,
+                search=request.query_params.get("search"),
+                status=request.query_params.get("status"),
+            )
         except PurchaseOrderError as exc:
             return self._error_response(exc)
-        return Response([serialize_purchase_order(order) for order in purchase_orders])
+        return paginate_response(
+            request,
+            purchase_orders,
+            serialize=lambda page: [serialize_purchase_order(order) for order in page],
+        )
 
     def retrieve(self, request, pk=None):
         try:
@@ -288,10 +303,16 @@ class RfqViewSet(RfqQuoteErrorMixin, viewsets.ViewSet):
 
     def list(self, request):
         try:
-            rfqs = list_accessible_rfqs(request.user)
+            rfqs = list_accessible_rfqs(
+                request.user,
+                search=request.query_params.get("search"),
+                status=request.query_params.get("status"),
+            )
         except RfqQuoteError as exc:
             return self._rfq_error_response(exc)
-        return Response(RfqSerializer(rfqs, many=True).data)
+        return paginate_response(
+            request, rfqs, serialize=lambda page: RfqSerializer(page, many=True).data
+        )
 
     def retrieve(self, request, pk=None):
         try:
@@ -323,10 +344,16 @@ class SupplierQuoteViewSet(RfqQuoteErrorMixin, viewsets.ViewSet):
 
     def list(self, request):
         try:
-            quotes = list_accessible_quotes(request.user)
+            quotes = list_accessible_quotes(
+                request.user,
+                search=request.query_params.get("search"),
+                status=request.query_params.get("status"),
+            )
         except RfqQuoteError as exc:
             return self._rfq_error_response(exc)
-        return Response(SupplierQuoteSerializer(quotes, many=True).data)
+        return paginate_response(
+            request, quotes, serialize=lambda page: SupplierQuoteSerializer(page, many=True).data
+        )
 
     def retrieve(self, request, pk=None):
         try:
@@ -391,10 +418,17 @@ class SupplierProductViewSet(viewsets.ViewSet):
 
     def list(self, request):
         try:
-            items = list_supplier_products(request.user)
+            items = list_supplier_products(
+                request.user,
+                search=request.query_params.get("search"),
+                quality_status=request.query_params.get("quality_status"),
+                is_active=parse_optional_bool(request.query_params.get("is_active")),
+            )
         except SupplierProductError as exc:
             return self._error_response(exc)
-        return Response(SupplierProductSerializer(items, many=True).data)
+        return paginate_response(
+            request, items, serialize=lambda page: SupplierProductSerializer(page, many=True).data
+        )
 
     def retrieve(self, request, pk=None):
         try:
