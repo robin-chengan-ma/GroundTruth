@@ -56,6 +56,7 @@ class Command(BaseCommand):
             ("Eva Kao", "eva@groundtruth.demo", "admin"),
             ("Frank Tsai", "frank@groundtruth.demo", "receiver"),
             ("Grace Liu", "grace@groundtruth.demo", "inspector"),
+            ("Henry Yang", "henry@groundtruth.demo", "procurement_director"),
         ]
         users = {}
         for name, email, role_code in specs:

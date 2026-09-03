@@ -367,3 +367,97 @@ CLI 改資料庫的路徑，換指令名稱沒有解決根本問題。
 
 **驗收狀態**：webhook 身分驗證修復——**通過**。n8n 自動啟用可靠性——**維持原本已知限制，
 未改善**。
+
+## 2026-09-03 候選解析 specifications 欄位使用中文 key，材質未顯示於候選畫面
+
+**現象**：Robin 驗收「單一供應商、單一品項解析」情境，輸入「跟優品科技詢價，採購網布 A產品-辦公椅 5
+張」，候選確認畫面供應商、品項、數量、單位皆正確辨識，唯獨「材質」欄位是空的，「AI 辨識內容」摘要
+也完全沒提到「網布」。
+
+**排查過程**：請 Robin 到 n8n Executions 開「Gemini 解析候選」節點的原始輸出，確認 Gemini 實際回傳：
+```json
+"items": [{
+  "product_name": "辦公椅",
+  "quantity": 5,
+  "unit_of_measure": "張",
+  "specifications": { "材質": "網布", "型號": "A產品" }
+}]
+```
+Gemini 其實**有**正確辨識出材質「網布」，只是用了中文 key `材質`，不是前端 `InquiryView.vue` 讀取用的
+固定英文 key `specifications.material`（另外「型號: A產品」也一樣沒地方顯示，因為前端規格欄位只有
+材質／尺寸／特色三個，被一併吃掉——不過 `product_name` 只剩「辦公椅」時，Django 端的品項比對邏輯仍正確
+匹配回「A產品-辦公椅」，這部分沒有問題）。
+
+**根因**：`purchase-request-candidate-flow.json` 的 Gemini 節點 prompt，`specifications` 欄位的 JSON
+schema 說明只寫了文字描述「材質／尺寸／特色等描述」，沒有明確規定確切的英文 key 名稱，讓 LLM 自由選擇
+key（這次選了中文），與前端／n8n「整理候選結構」節點（`toObject(row.specifications)` 直接原樣通過，不
+做 key 轉換）之間沒有約定好的固定契約。
+
+**修復方式**：把 Gemini prompt 的 `specifications` schema 說明改成明確指定固定英文 key：
+```
+"specifications": { "material": string, "size": string, "features": string }
+```
+並加一句明確指示：「specifications 的 key 一律固定用英文 material／size／features，不要用中文或其他字；
+不屬於這三類的描述（例如型號、款式），併入 product_name 或 features，不要自創新的 key」。查過 Django
+端（`inquiry_service.py`／`erp/models.py`）`specifications` 是自由格式 JSONField，不限制 key 名稱，改
+prompt 不影響其他既有邏輯，是乾淨的根因修復，只改了 `n8n/workflows/purchase-request-candidate-flow.json`
+一個檔案。
+
+**驗證方式**：待 Robin 重新套用修復後的 workflow，用同一組輸入（跟優品科技詢價，採購網布 A產品-辦公椅
+5 張）重新解析一次，確認候選畫面「材質」欄位正確顯示「網布」。
+
+**未驗證範圍**：這次只針對「材質」這個具體案例修正，Gemini 是否在其他更複雜的輸入（例如同時有材質、
+尺寸、特色三種規格）下都會穩定遵守新的英文 key 規則，尚未測試，屬於 LLM 輸出穩定性的既有已知限制（同
+本檔案先前條目：LLM 回應格式的邊界情況需持續觀察）。
+## 2026-09-03 改用 gemini-3.5-flash-lite 後材質仍未擷取、品項比對再度失敗
+
+**現象**：Robin 為加快 n8n 節點回應速度（`gemini-3.6-flash` 常需等待較久甚至偶爾逾時斷線），
+把 Gemini 節點模型從 `gemini-3.6-flash` 換成 `gemini-3.5-flash-lite`。套用前一則「specifications
+固定英文 key」修復後，用同一組輸入「跟優品科技詢價，採購網布 A產品-辦公椅 5 張」重新測試，出現兩種
+失敗模式：①部分執行中「品項」正確比對回「A產品-辦公椅」（已匹配），但「材質」欄位仍是空的；②另一次
+執行「AI 辨識內容」摘要變成「網布 A產品-辦公椅」，`product_name` 把「網布」併入品名，導致 Django 端
+完全比對／唯一補回都對不上正式品項，候選畫面顯示「尚未找到正式品項」。
+
+**排查過程**：對照兩次執行結果，確認並非「specifications key 名稱」的老問題（prompt 已明確要求英文
+key），而是 `gemini-3.5-flash-lite` 對「判斷描述詞屬於哪個欄位、並把它從品名裡拆出來」這種需要語意
+分類的規則，遵從度明顯不如 `gemini-3.6-flash`：prompt 文字規則本身沒變，只是換了模型執行同一份
+prompt 就出現新的失敗模式，可判斷是模型能力差異而非 prompt 邏輯本身有誤。
+
+**根因**：現行 prompt 只用文字描述規則（「不屬於這三類的描述…併入 product_name 或 features」
+「specifications 的 key 一律固定用英文 material／size／features」），沒有具體範例示範「材質詞出現
+在品名前綴時該如何拆分」。體積較小的模型（`gemini-3.5-flash-lite`）在缺乏具體範例（few-shot）的情況
+下，對這類需要語意判斷的抽取規則穩定性較差，屬於已知的小模型限制，非邏輯性 bug。
+
+**修復方式**：在 `n8n/workflows/purchase-request-candidate-flow.json` 的 Gemini prompt 中，於既有
+規則段落之後加入一組具體 few-shot 範例（輸入「跟 SUP_001 採購不鏽鋼 B產品-置物架 10 個，尺寸大約
+60x40cm」→ 對應正確 JSON 輸出，示範材質詞「不鏽鋼」從品名中拆出到 `specifications.material`、尺寸
+描述拆到 `specifications.size`），並加一句「範例僅供格式參考，不要照抄內容／不要複製範例的品項或供應
+商名稱」提醒，避免模型把範例的品項名稱誤植進真實輸出。只改這一個檔案的 prompt 文字，不影響 JSON
+schema 結構、Django 端解析邏輯或既有 `specifications` 自由格式 JSONField。
+
+**驗證方式**：本次僅完成「渲染正確性」驗證——用 Node.js 在裝置端 `eval` 實際執行這段 n8n 表達式
+（模擬 `$json.body.raw_text` 代入真實輸入文字），確認：①JS 語法正確、無多餘反引號或未跳脫的
+`${}`；②`JSON.stringify` 外層輸出可被 `JSON.parse` 正確解析；③範例區塊與真實輸入文字都正確出現在
+最終送給 Gemini 的 prompt 文字裡（順序、換行皆正確）。**未實際呼叫真實 Gemini API 驗證修復效果**：
+本沙盒環境對 `generativelanguage.googleapis.com` 的對外連線被 proxy 擋下（`curl` 回 403 from
+proxy），且依專案安全規範不得將 `GEMINI_API_KEY` 從使用者裝置傳輸到其他環境，因此無法在本次會話內
+完成端到端驗證。
+
+**未驗證範圍**：few-shot 範例是否真的讓 `gemini-3.5-flash-lite` 穩定通過材質擷取與品項比對，待
+Robin 在自己的 n8n 環境重新匯入／套用此 workflow 後，用同一組輸入（以及理想上再測 1-2 組不同材質／
+尺寸描述的句子）重新解析驗證；若驗證後這個小模型在更多情境下仍不穩定，才需要考慮記錄為已知限制
+（此類情境判定不通過或部分通過），或退回使用 `gemini-3.6-flash`。
+## 2026-09-03 gemini-3.5-flash-lite few-shot 修復經 Robin 實測，材質擷取與品項比對皆恢復正常
+
+**驗證方式**：Robin 在自己的 n8n 環境重新套用修復後的 workflow，用同一組輸入「跟優品科技詢價，採購網布
+A產品-辦公椅 5 張」透過瀏覽器重新解析，並附上畫面截圖佐證。
+
+**驗證結果**：「AI 辨識內容」摘要正確顯示「A產品-辦公椅 / 數量 5 張 / 材質：網布」，`product_name`
+不再把「網布」併入品名；品項 1 狀態顯示「已匹配」，成功比對回正式品項「A產品-辦公椅」；「材質」欄位
+正確顯示「網布」，數量、單位皆正確。兩種先前失敗模式（材質未擷取、材質詞污染品名導致比對失敗）在此次
+測試中皆未重現。
+
+**結論**：few-shot 範例修復對這組已知失敗輸入有效，**驗收通過**。前一則條目「未驗證範圍」所列的疑慮
+（範例是否讓小模型穩定通過材質擷取）在這組情境下已獲確認；是否在更多元的輸入（例如同時有材質、尺寸、
+特色三種規格，或材質詞出現在品名之後而非之前）下依然穩定，仍未測試，維持既有已知限制範圍的一部分，
+非本次判定條件。
