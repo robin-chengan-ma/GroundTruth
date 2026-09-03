@@ -152,6 +152,7 @@ updated: 2026-09-03
 | 2026-09-02 | 67a6f9c | fix(phase5)：人工複核核准續傳改由 Django 直接接管，並補齊持久化狀態與重試（含 ②③ 權限碼修正、①續傳改版、Codex 複查 4 項缺口修復、Migration ②、crm／erp migration 相依性附帶修正） | Claude／Codex／Robin |
 | 2026-09-02 | 7a600c8 | feat(phase7)：n8n 正式流程、Gmail 通知（FR-6b／FR-8，含通知連結與角色生效時間判斷修正）、Docker Compose 一鍵啟動（含 demo seed／n8n workflow 自動初始化，Codex 複查建議、Robin 核准） | Claude／Codex／Robin |
 | 2026-09-03 | 1b04be9 | docs(audit)：全面盤點 SPEC／PROGRESS／DRAFT／ADR／reference，修正技術棧、DB schema、API 文件與 ADR 狀態不一致（含 README.md 改寫、`docs/demo-guide.md` 移至 `docs/reference/demo-guide.md`） | Claude／Robin |
+| 2026-09-03 | b50f6b5 | fix(phase7)：修復一鍵啟動建置問題（frontend Dockerfile Node 版本／漏 COPY pnpm-workspace.yaml）並補上 n8n webhook（notify／purchase-request-candidate）身分驗證缺口，`init-workflows.sh` 換用 `publish:workflow` | Claude／Robin |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
