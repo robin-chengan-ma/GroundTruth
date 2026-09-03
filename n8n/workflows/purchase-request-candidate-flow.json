@@ -4,7 +4,7 @@
   "nodes": [
     {
       "parameters": {
-        "content": "Phase 5 起，遮罩／還原、供應商與品項比對、Purchase Request 建立全部改由 Django\n（`services/inquiry_service.py`、`services/masking_service.py`）處理；這支 workflow\n只負責「純解析」：接收 Django 已遮罩好的文字，呼叫 Gemini 解析成結構化候選，原樣把\nToken（SUP_xxx／AMOUNT_xxx）交還，不呼叫任何 Django 查詢／試算／摘要 API，也不做\n供應商或品項比對。\n\n對應 Django 呼叫端：`repositories/inquiry.py:request_candidate_parse()`，\n環境變數 `N8N_INQUIRY_PARSE_WEBHOOK_URL`（預設路徑 `webhook/purchase-request-candidate`）。\n同一支 webhook 同時服務兩種情境：\n1. 一般候選解析（`services/inquiry_service.py:parse_purchase_request_candidate`）\n2. FR-6a 人工複核核准後的續傳解析（`resolve_candidate_after_manual_review`）\n兩者呼叫的 payload 形狀相同（`{raw_text, user_id}`），這支 workflow 不需要分流。",
+        "content": "Phase 5 起，遮罩／還原、供應商與品項比對、Purchase Request 建立全部改由 Django\n（`services/inquiry_service.py`、`services/masking_service.py`）處理；這支 workflow\n只負責「純解析」：接收 Django 已遮罩好的文字，呼叫 Gemini 解析成結構化候選，原樣把\nToken（SUP_xxx／AMOUNT_xxx）交還，不呼叫任何 Django 查詢／試算／摘要 API，也不做\n供應商或品項比對。\n\n對應 Django 呼叫端：`repositories/inquiry.py:request_candidate_parse()`，\n環境變數 `N8N_INQUIRY_PARSE_WEBHOOK_URL`（預設路徑 `webhook/purchase-request-candidate`）。\n同一支 webhook 同時服務兩種情境：\n1. 一般候選解析（`services/inquiry_service.py:parse_purchase_request_candidate`）\n2. FR-6a 人工複核核准後的續傳解析（`resolve_candidate_after_manual_review`）\n兩者呼叫的 payload 形狀相同（`{raw_text, user_id}`），這支 workflow 不需要分流。\n\n2026-09-03 補上「IF：Internal API Key 正確？」節點：webhook 收到請求後先比對\nheader `X-Internal-Api-Key`是否等於 `$env.INTERNAL_API_KEY`，不符合直接回 401，\n不繼續呼叫 Gemini。修復前任何人都能直接打這支 webhook 消耗 Gemini 額度，\n不需要任何驗證（見 docs/ADR/debug/phase7-integration.md 2026-09-03 條目）。",
         "height": 320,
         "width": 460
       },
@@ -81,6 +81,55 @@
         40,
         0
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-if-internal-key-candidate",
+              "leftValue": "={{$json.headers['x-internal-api-key']}}",
+              "rightValue": "={{$env.INTERNAL_API_KEY}}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-internal-key-candidate",
+      "name": "IF：Internal API Key 正確？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { detail: 'unauthorized' } }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-unauthorized-candidate",
+      "name": "回覆：未授權",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -560,
+        60
+      ]
     }
   ],
   "connections": {
@@ -88,7 +137,7 @@
       "main": [
         [
           {
-            "node": "Gemini 解析候選",
+            "node": "IF：Internal API Key 正確？",
             "type": "main",
             "index": 0
           }
@@ -111,6 +160,24 @@
         [
           {
             "node": "回覆：候選結構",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF：Internal API Key 正確？": {
+      "main": [
+        [
+          {
+            "node": "Gemini 解析候選",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "回覆：未授權",
             "type": "main",
             "index": 0
           }

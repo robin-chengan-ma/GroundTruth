@@ -1,6 +1,6 @@
 ---
 title: Demo 操作指南
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # Demo 操作指南
@@ -96,16 +96,25 @@ updated: 2026-09-02
 
 ## 已知限制／未驗證範圍
 
-- `docker compose up` 的完整五服務（含 `n8n-init`）啟動流程尚未在真實機器上實測成功，
-  僅驗證過 `docker compose config` 語法、各服務個別建置／測試通過、shell script 語法
-  檢查，詳見 `docs/reference/deploy.md`「Docker Compose（根目錄，Phase 7）」與
-  `docs/ADR/discuss/phase7-integration.md` 2026-09-02 條目
-- `n8n-init` 自動匯入並啟用 workflow 的邏輯依據 n8n 官方文件推演撰寫，但本沙箱連不到
-  容器登錄檔、無法實際拉 `n8nio/n8n` image 跑一次驗證是否真的如預期運作（尤其自動啟用
-  那一步，n8n CLI 各版本行為不完全一致），第一次啟動請務必檢查 log 與 n8n 畫面
+- `docker compose up --build` 的完整五服務（含 `n8n-init`）啟動流程已於 2026-09-03 由
+  Robin 在真實機器上實測成功：五服務皆 `Up (healthy)`、migration 自動套用、demo seed
+  自動建立（7 個帳號）、`purchase-request-candidate-flow.json`／`notification-flow.json`
+  兩個 workflow 皆自動匯入且未誤匯入 legacy、前端 `http://localhost:5173` 可正常開啟。
+  過程中修復了 3 個先前未發現的 Docker 建置問題（Node 版本、`pnpm` build script 核准、
+  `Dockerfile` 漏 COPY `pnpm-workspace.yaml`），詳見 `docs/ADR/debug/phase7-integration.md`
+  2026-09-03 條目
+- `n8n-init` 自動啟用「採購需求候選解析」workflow **經實測證實不可靠**：CLI 指令
+  （`update:workflow --active=true`）只改資料庫欄位，不會通知已在跑的 n8n 服務重新註冊
+  webhook，UI 顯示 Published 但打正式 webhook 仍可能回 404。**目前確認有效的解法**：到
+  n8n 畫面把該 workflow 的 Active 開關關掉再開一次，即可讓服務重新註冊（Robin
+  2026-09-03 實測驗證過）。是否要投資改用 n8n Public API 做到完全自動化，屬待決的架構
+  決策，見 `docs/ADR/debug/phase7-integration.md`
 - Gmail 通知的 OAuth 授權與實際收信尚未實測
-- 瀏覽器完整端到端（跨 Backend／Frontend／n8n／PostgreSQL 同時啟動）尚未實測；Phase 4／6
-  的瀏覽器驗收目前是在 Vite 本機開發伺服器下進行，API 流程另由 pytest 覆蓋
+- 展示腳本（上方步驟 1–7）跨 Backend／Frontend／n8n／PostgreSQL 全部由 Docker Compose
+  同時啟動的完整瀏覽器端到端尚未實測；本次只驗證到服務啟動與 webhook 可正確觸發，尚未
+  走過完整業務流程；Phase 4／6 的瀏覽器驗收目前是在 Vite 本機開發伺服器下進行，API 流程
+  另由 pytest 覆蓋
 
-在 Robin 實際跑過 `docker compose up --build` 並確認上述自動化如預期運作前，Phase 7
-不得標記為正式驗收完成（見 `docs/specs/PROGRESS.md`）。
+`docker compose up --build` 一鍵啟動本身已於 2026-09-03 完成真實環境驗收；Gmail 通知
+與完整瀏覽器端到端展示流程仍待驗證，在此之前 Phase 7 整體仍不視為正式驗收完成（見
+`docs/specs/PROGRESS.md`）。

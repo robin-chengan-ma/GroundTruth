@@ -1,6 +1,6 @@
 ---
 title: 部署 Reference
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # 部署 Reference
@@ -37,25 +37,27 @@ updated: 2026-09-02
 | 執行方式 | `n8n/docker-compose.yml`（`docker compose up`，於 `n8n/` 目錄執行） |
 | 必要環境變數 | 複製 `n8n/.env.example` 為 `n8n/.env`：`DJANGO_API_BASE_URL`（容器內存取本機 Django 用 `http://host.docker.internal:8000`）、`INTERNAL_API_KEY`（需與 `backend/.env` 一致）、`GEMINI_API_KEY` |
 | 已知限制／踩坑 | n8n 2.x 預設擋 Code/Expression node 存取 `$env`，`docker-compose.yml` 已加 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` 開放，不然 workflow 裡的 `{{$env.xxx}}` 全部會失敗（`access to env vars denied`），本機驗證時發現並記錄，詳見 `docs/ADR/debug/n8n-env-access.md` |
+| 身分驗證（2026-09-03 起） | `purchase-request-candidate-flow.json`、`notification-flow.json` 的 webhook 節點後方各加了「IF：Internal API Key 正確？」節點，比對呼叫端送來的 `X-Internal-Api-Key` header 是否等於 `INTERNAL_API_KEY` 環境變數，不符合回 401、不繼續執行。修復前這兩支 webhook 沒有任何驗證，任何人連得到 5678 port 就能直接觸發寄信／呼叫 Gemini，詳見 `docs/ADR/debug/phase7-integration.md` |
 | Workflow 檔案 | `n8n/workflows/purchase-request-candidate-flow.json`（現行正式流程，2026-09-02 起）：接收 Django 已遮罩好的文字，呼叫 Gemini 純解析成候選結構後原樣回傳（不查詢／不試算），對外路徑 `POST http://localhost:5678/webhook/purchase-request-candidate`，服務 `N8N_INQUIRY_PARSE_WEBHOOK_URL`。`n8n/workflows/notification-flow.json`（FR-6b／FR-8 通知，2026-09-02 新增）：接收 Django 組好的 `{subject, body, recipients, link}` 呼叫 Gmail 節點寄出，對外路徑 `POST http://localhost:5678/webhook/notify`，服務 `N8N_NOTIFY_WEBHOOK_URL`；匯入後需在「寄送 Gmail」節點手動完成一次 Google 帳號 OAuth 授權，無法自動化。`n8n/workflows/inquiry-flow.json` 為 Phase 3 舊版，兩條分支呼叫的 Django 端點皆已於 Phase 5.0-B3A 退場回 `410 Gone`，現況已無任何正式程式碼呼叫，檔案內已加 sticky note 標記，僅供歷史對照。**以上匯入自動化（`n8n-init`／`init-workflows.sh`）只存在於根目錄 `docker-compose.yml`；本節的獨立 `n8n/docker-compose.yml` 沒有對應的自動匯入服務，仍須依上方舊版說明手動匯入。** |
 | 對外埠 | `5678` |
 | Health Check | `GET http://localhost:5678/healthz` |
 | 目前無基礎設施 | 沒有另外的 basic auth／對外網址；只在本機 Docker 跑，正式對外使用前應補上驗證 |
+| 與根目錄 Docker Compose 的衝突 | `n8n/docker-compose.yml` 與根目錄 `docker-compose.yml` 的 n8n 服務皆寫死 `container_name: groundtruth-n8n` 且都綁 `5678` port，兩者使用不同 volume（`n8n_data` vs `groundtruth_n8n_data`）；若其中一份啟動過，另一份會在容器建立階段撞名（先啟動者仍在跑則還會先撞 port）。不要交錯或同時啟動這兩份 compose，見 `docs/ADR/debug/phase7-integration.md` 2026-09-03 條目 |
 
 ## Docker Compose（根目錄，Phase 7）
 
 | 項目 | 內容 |
 | --- | --- |
-| 檔案 | 根目錄 `docker-compose.yml`；`backend/Dockerfile`＋`backend/docker-entrypoint.sh`、`frontend/Dockerfile`、`n8n/scripts/init-workflows.sh`（`n8n/docker-compose.yml` 仍保留供只需單獨啟動 n8n 的情境使用，不是根目錄 compose 的一部分） |
+| 檔案 | 根目錄 `docker-compose.yml`；`backend/Dockerfile`＋`backend/docker-entrypoint.sh`、`frontend/Dockerfile`（build 階段基底映像 `node:22-slim`，因 `frontend/package.json` `packageManager` 釘死 `pnpm@11.25.0` 要求 Node >= 22.13，2026-09-03 起，見 `docs/ADR/debug/phase7-integration.md`）、`n8n/scripts/init-workflows.sh`（`n8n/docker-compose.yml` 仍保留供只需單獨啟動 n8n 的情境使用，不是根目錄 compose 的一部分） |
 | 服務 | `postgres`（`postgres:16-alpine`）、`backend`（`docker-entrypoint.sh`：`manage.py migrate` → 視 `LOAD_DEMO_DATA` 決定是否 `seed_demo_data` → `runserver 0.0.0.0:8000`）、`frontend`（Node 建置＋nginx 提供 `dist/` 並反向代理 `/api` 給 `backend` 服務）、`n8n`（`n8nio/n8n:latest`，已加 `/healthz/readiness` healthcheck）、`n8n-init`（一次性服務，等 `n8n` healthcheck 通過後跑 `init-workflows.sh`） |
 | 一鍵啟動涵蓋範圍（2026-09-02 起，Codex 建議、Robin 核准） | ①`LOAD_DEMO_DATA=true`（`.env.example` 預設值）時 backend 啟動自動跑 `seed_demo_data`，全用 `get_or_create`，冪等、不清空不覆蓋既有資料；②`n8n-init` 服務自動 `import:workflow` 現行必要的 `purchase-request-candidate-flow.json`／`notification-flow.json`（皆內建固定 `id`，重複匯入是覆寫非新增，冪等），並嘗試自動啟用前者；③Gmail 通知流程刻意只匯入不啟用，Google OAuth 授權與啟用仍須 Robin 手動完成一次（無法自動化）；④legacy `inquiry-flow.json` 不在自動匯入清單內，不會被碰到或啟用 |
 | 使用方式 | 複製根目錄 `.env.example` 為 `.env` 填入必要值，於根目錄執行 `docker compose up --build` |
 | 對外埠 | backend `8000`、frontend `5173`（對應容器內 nginx `80`）、n8n `5678`、postgres `5432` |
 | 容器間連線 | 全部服務在同一個 compose 網路內，彼此以 service 名稱互連（例如 backend 呼叫 n8n 用 `http://n8n:5678`），不是 `host.docker.internal` |
-| 已知限制 | 本次僅驗證到 `docker compose config`（語法／變數插值正確，含 `n8n-init` 服務與新 healthcheck）、`sh -n` shell script 語法檢查、各服務各自獨立驗證（`pytest` 433 全過、`pnpm build` 成功產出 `dist/`）；**尚未在任何環境實際執行過 `docker compose up` 驗證五個服務能否一起成功啟動**，`n8n-init` 的自動匯入／啟用邏輯是依 n8n 官方 CLI 文件推演撰寫（`n8n update:workflow` 已於 n8n 2.0 起標記 deprecated，各版本啟用行為不完全一致，已在 script 內加上失敗時的警告訊息與不中止設計），未經真實 n8n 環境跑過驗證是否確實如預期運作，見 `docs/ADR/discuss/phase7-integration.md` 2026-09-02 條目——這一步需要 Robin 在自己機器上執行驗證 |
+| 已知限制 | Robin 已於 2026-09-03 在真實機器上執行 `docker compose up --build` 完整驗證五服務可一起成功啟動（migration／demo seed／n8n workflow 匯入皆自動完成），過程中修復3 個 Docker 建置問題（Node 版本、pnpm build script 核准、Dockerfile 漏 COPY `pnpm-workspace.yaml`），詳見 `docs/ADR/debug/phase7-integration.md`；`n8n-init` 的自動啟用已改用 `publish:workflow`（取代 deprecated 的 `n8n update:workflow`，2026-09-03 起）；已在真實環境驗證，**跟 `update:workflow` 一樣不可靠**（服務已在跑、CLI 改資料庫但不會通知服務重新註冊 webhook），仍需人工在畫面上切換一次 Active 開關才會真的生效——換指令只是移除 deprecated 警告，沒有解決根本問題；是否投資改用 n8n Public API 做到完全自動化仍待 Robin 決定 |
 
 ## 已知限制
 
-- **`docker compose up` 尚未實測**：見上方 Docker Compose 區塊，需要 Robin 在自己機器上驗證，包含 demo 種子資料與 n8n workflow 的自動初始化是否確實如預期運作
+- **`docker compose up --build` 已於 2026-09-03 完成真實環境驗證**：見上方 Docker Compose 區塊；demo 種子資料自動建立、n8n workflow 匯入自動完成，唯自動啟用需人工介入一次，詳見 `docs/ADR/debug/phase7-integration.md`
 - Phase 4／6 的瀏覽器驗證使用 Vite 本機頁面，未串接 Docker Compose 一起啟動的 Django／n8n 做完整真實環境 E2E；API 流程由 pytest integration tests 驗證
-- n8n Gmail 通知（FR-6b／FR-8）尚未用真實 Gmail 帳號實測寄信成功；`notification-flow.json` 的邏輯已隨附說明文件，但 OAuth 授權與實際收信驗證需要 Robin 操作
+- n8n Gmail 通知（FR-6b／FR-8）：2026-09-03 已用真實 Gmail OAuth 帳號直打 `webhook/notify` 驗證成功收信（recipients 轉換、IF 分流、Gmail 寄送、webhook 回應皆驗證過），但這只證實「n8n 內部這段鏈路」；正式業務路徑「Django 事件（人工複核建立／簽核關卡啟動）→ `notification_service.py`→ n8n → Gmail」尚未端到端驗證過，且 n8n 編輯器裡「Execute step」手動單節點測試目前會卡住無回應（根因未確認，webhook 觸發不受影響）。另外驗證過程發現並修復兩支 n8n webhook 原本完全沒有驗證`X-Internal-Api-Key` 的安全缺口（詳見 `docs/ADR/debug/phase7-integration.md`），修復後已在真實環境驗證：notify／candidate-parse 兩支 webhook 各三種情況（正確 key／錯誤 key／缺少 header）共 6 次請求，結果皆符合預期

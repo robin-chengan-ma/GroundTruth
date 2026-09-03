@@ -15,12 +15,16 @@
 # 匯入與啟用的分工：
 # - 匯入失敗（`set -e` 觸發）→ 本容器以非 0 狀態結束，`docker compose` 會
 #   明確顯示 n8n-init 失敗，不會靜默略過。
-# - 「採購需求候選解析」流程匯入後嘗試自動啟用；n8n CLI 的啟用指令在不同
-#   版本行為並不完全一致（`update:workflow` 已於 n8n 2.0 起標記為
-#   deprecated），啟用失敗時只印警告、不中止整個初始化，需要 Robin 手動到
-#   n8n 畫面確認並視需要手動啟用。
-# - 「Gmail 通知」流程刻意只匯入、不呼叫啟用指令：Google 帳號 OAuth 授權
+# - 「採購需求候選解析」流程匯入後嘗試自動發布；改用 `publish:workflow`
+#   （n8n 2.0 起 `update:workflow --active=true` 已 deprecated，見
+#   docs/ADR/debug/phase7-integration.md 2026-09-03 條目），發布失敗時只印
+#   警告、不中止整個初始化，需要 Robin 手動到 n8n 畫面確認並視需要手動啟用。
+# - 「Gmail 通知」流程刻意只匯入、不呼叫發布指令：Google 帳號 OAuth 授權
 #   仍須在 n8n 畫面上手動完成一次（無法自動化），完成後才由 Robin 手動啟用。
+# - 兩個 workflow 都在 webhook 節點後加了「IF：Internal API Key 正確？」，
+#   比對 header `X-Internal-Api-Key` 是否等於 `INTERNAL_API_KEY` 環境變數，
+#   不符合直接回 401（見 docs/ADR/debug/phase7-integration.md 2026-09-03
+#   條目：修復前這兩支 webhook 任何人都能直接打，不需要任何驗證）。
 set -e
 
 WORKFLOWS_DIR=/home/node/workflows
@@ -32,11 +36,11 @@ n8n import:workflow --input="$WORKFLOWS_DIR/purchase-request-candidate-flow.json
 echo "[n8n-init] 匯入 Gmail 通知流程（先不啟用，需完成 Google OAuth 授權後再手動啟用）..."
 n8n import:workflow --input="$WORKFLOWS_DIR/notification-flow.json"
 
-echo "[n8n-init] 嘗試啟用採購需求候選解析流程..."
-if n8n update:workflow --id="$CANDIDATE_ID" --active=true; then
-  echo "[n8n-init] 啟用成功。"
+echo "[n8n-init] 嘗試發布（啟用）採購需求候選解析流程..."
+if n8n publish:workflow --id="$CANDIDATE_ID"; then
+  echo "[n8n-init] 發布成功。"
 else
-  echo "[n8n-init] 警告：自動啟用失敗（可能是這個 n8n 版本已移除或改名 update:workflow 指令）。"
+  echo "[n8n-init] 警告：自動發布失敗（可能是這個 n8n 版本的 publish:workflow 指令行為不同）。"
   echo "[n8n-init] 請手動到 http://localhost:5678 開啟「GroundTruth - 採購需求候選解析（Phase 5 起正式流程）」並啟用。"
 fi
 

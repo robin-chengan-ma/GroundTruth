@@ -1,6 +1,6 @@
 ---
 title: API Reference
-updated: 2026-09-02
+updated: 2026-09-03
 ---
 
 # API Reference
@@ -35,7 +35,7 @@ SPEC「搜尋、篩選、分頁」缺口補齊：`suppliers`、`products`、`pro
 | --- | --- | --- |
 | Vue 前端 | `/auth/*`、一般資源、`inquiries/parse/`、簽核／複核 action | Access Token 放記憶體並以 `Authorization: Bearer <token>` 傳送；Refresh Token 僅存 HttpOnly、SameSite=Lax Cookie，refresh/logout 另驗證 `X-CSRFToken` |
 | n8n | suppliers/products 唯讀查詢、`masking/mask/`、`masking/mask-amounts-only/`、`masking/unmask/` | 固定 API Key，自訂 header `X-Internal-Api-Key`，需與 `INTERNAL_API_KEY` 環境變數一致（FR-1a）；legacy `quotes/calculate/` 與 `quotes/verify-hallucination/` 已停用 |
-| Django（主動呼叫方） | n8n 的 `N8N_RESUME_WEBHOOK_URL`（`POST .../webhook/inquiry/resume`） | 固定 API Key，同上 header；由 Django 主動發起，不是被呼叫端，見 `docs/ADR/discuss/main-flow.md` |
+| Django（主動呼叫方） | n8n 的 `POST .../webhook/purchase-request-candidate`、`POST .../webhook/notify` | 固定 API Key，同上 header，`n8n/workflows/purchase-request-candidate-flow.json`、`notification-flow.json` 的 webhook 節點後方各有一個「IF：Internal API Key 正確？」節點比對 `X-Internal-Api-Key` 是否等於 n8n 容器的 `INTERNAL_API_KEY` 環境變數（2026-09-03 起；修復前 n8n 端從未驗證這個 header，任何人都能直接打這兩支 webhook，見 `docs/ADR/debug/phase7-integration.md`）。`N8N_RESUME_WEBHOOK_URL`（`webhook/inquiry/resume`）現況已無程式碼呼叫，屬死設定，見 `docs/reference/deploy.md` |
 
 ## Vue 登入與 Session
 

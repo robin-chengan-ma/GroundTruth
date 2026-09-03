@@ -1,6 +1,6 @@
 ---
 title: 內部採購與簽核 AI Agent 系統
-updated: 2026-09-02
+updated: 2026-09-03
 owner: Robin
 ---
 
@@ -239,4 +239,4 @@ owner: Robin
 
 | 情境 | 預期結果 | 實測結果 | 狀態 |
 | --- | --- | --- | --- |
-| | | | 通過 / 失敗 / 待測 |
+| 全新環境一鍵啟動（`docker compose up --build`，根目錄五服務：postgres／backend／frontend／n8n／n8n-init） | PostgreSQL、Backend、Frontend、n8n 皆正常啟動；migration 自動完成；demo seed 自動建立；必要 n8n workflow（採購需求候選解析、Gmail 通知）自動匯入；採購需求候選解析 workflow 為 Active；前端可由 `http://localhost:5173` 開啟 | 2026-09-03 五服務全數 `Up (healthy)`：PostgreSQL／Backend／Frontend／n8n 皆正常啟動；migration 全部自動套用；demo seed 自動建立（7 個帳號）；`purchase-request-candidate-flow.json`／`notification-flow.json` 皆自動匯入且未誤匯入 legacy；前端 `curl -I http://localhost:5173` 回 200。「採購需求候選解析」自動啟用經 webhook 實測一度失效（UI 顯示 Published 但回 404），根因是 CLI 指令改資料庫不會通知已在跑的服務重新註冊 webhook；人工切換一次 Active 開關後重測即恢復正常。過程中另修復 3 個先前未發現的 Docker 建置問題（詳見 `docs/ADR/debug/phase7-integration.md`）。 | 通過（n8n workflow 啟用需人工切換開關一次，其餘全自動完成；已知並列入 demo-guide.md 操作步驟） |
