@@ -22,8 +22,8 @@ owner: Robin
 | 邏輯 | Django + DRF | 6.x / 3.18+ | 使用中 | 單一資料真相來源：`repositories/` 存取 PostgreSQL、`services/` 處理報價試算與驗證邏輯、`api/` 提供 REST endpoint 給 Vue 和 n8n 呼叫 |
 | 記憶 | PostgreSQL | 18.x | 使用中 | 唯一資料儲存，Django 透過 `repositories/` 存取 |
 | 身份 | djangorestframework-simplejwt | 5.5.x | 使用中 | Vue↔Django 用 JWT；n8n↔Django（含 webhook 觸發/回呼）用固定 API Key 驗證自訂 header |
-| AI | Gemini / Groq | API 版本，不鎖定模型版號 | 使用中 | 語意解析與文案生成 |
-| 連線 | n8n（自架 Docker） | 最新自架版（不鎖定版號，定期更新） | 使用中 | AI 流程協調層，只負責串接：接收詢價請求 → 遮罩 → LLM 解析 → 呼叫 Django API 查資料 → LLM 生成摘要 → 呼叫 Django API 驗證比對 → 串接 Gmail 通知 |
+| AI | Gemini | API 版本，不鎖定模型版號 | 使用中 | 自然語言解析為候選結構（FR-16b）；Groq 曾列為候選項但從未實際串接，已移除（2026-09-02） |
+| 連線 | n8n（自架 Docker） | 最新自架版（不鎖定版號，定期更新） | 使用中 | AI 流程協調層，只負責串接：接收詢價／需求解析請求 → Django 先遮罩敏感資訊 → 呼叫 Gemini 解析候選結構 → 回傳 Django 還原並建檔；legacy「LLM 生成摘要 → Django 驗證比對」幻覺檢查流程已於 Phase 5.0-B3A 隨相關端點退役（FR-6／FR-6a） |
 | 通知 | Gmail（n8n Gmail 節點） | 隨 n8n 版本 | 使用中 | 通知簽核人；可選：監看信箱自動解析供應商報價信 |
 | 版控 | GitHub | — | 使用中 | 版本控制與程式碼託管 |
 | 部署 | Docker Compose（本地一鍵啟動） | — | 使用中 | 前端、後端、n8n、PostgreSQL 全部容器化，`docker compose up` 一鍵啟動；非公開上線用途，不部署到雲端平台 |
@@ -112,7 +112,7 @@ owner: Robin
 
 **非功能性需求**
 - NFR-1：安全 — 送往 LLM 的內容必須先脫敏（遮罩敏感欄位），且遮罩/還原邏輯以固定程式碼實作，不交由 LLM 判斷；遮罩對照表僅於單次請求流程中暫存，不落地存 DB
-- NFR-2：可信度 — 幻覺驗證比對邏輯為固定程式碼，AI 無法修改或跳過；驗證失敗案件不得直接顯示給一般使用者
+- NFR-2：可信度 — 正式金額、得標與單據一律由 Django 固定程式邏輯計算，LLM 不參與（FR-4／FR-5）；AI 解析出的候選供應商與品項僅在與主檔精確命中時自動對應，模糊或有多個可能值一律交由使用者手動確認，不得由 AI 猜測（FR-3）。legacy 幻覺驗證機制（比對 LLM 生成摘要文字中的數字）已於 Phase 5.0-B3A 隨相關端點一併退役（FR-6／FR-6a），現行流程改為候選存成正式草稿前由後端驗證簽章並記錄直接採用／人工修正統計，供稽核觀察品質趨勢，不作為擋下案件的判斷依據
 - NFR-3：一致性 — 正式金額、得標、簽核、驗收與庫存異動由 Django transaction 與資料庫約束保證；LLM／n8n 失敗不得留下半套正式單據
 - NFR-4：可追溯性 — 正式單據使用不可變快照，稽核紀錄與庫存流水採 append-only；錯誤以新版、取消、作廢或反向更正處理
 
@@ -143,7 +143,10 @@ owner: Robin
 - NFR-2：安全 — 不適用（demo 系統，非高流量情境）
 
 **實作階段**（對應 PROGRESS.md 的任務追蹤）
-- Phase 1：待補
+- Phase 1：Django 基礎 Schema 與 CRUD API
+- Phase 4.1：供應商產品與版本化價格骨架、多角色 RBAC
+- Phase 5：契約補齊（列表／唯讀查詢、permission code、fail closed）
+- Phase 6：完整可編輯欄位（`code`／`status`／`tax_id`／`contact`／`payment_terms`／`is_active` 等）與主檔管理操作介面
 
 ### ERP 模組
 
@@ -164,7 +167,10 @@ owner: Robin
 - NFR-2：安全 — 不適用（demo 系統，非高流量情境）
 
 **實作階段**（對應 PROGRESS.md 的任務追蹤）
-- Phase 1：待補
+- Phase 1：Django 基礎 Schema 與 CRUD API
+- Phase 4.1：採購單、收貨驗收、庫存流水骨架
+- Phase 5：契約補齊（列表／唯讀查詢、permission code、fail closed）
+- Phase 6：品項／分類／規格完整欄位、`InventoryBalanceViewSet`／`InventoryMovementViewSet` 唯讀查詢 API、驗收差異與採購建議操作介面
 
 ### 權限管理
 
@@ -187,7 +193,10 @@ owner: Robin
 - NFR-1：安全 — 不適用（demo 系統，非高流量情境）
 
 **實作階段**（對應 PROGRESS.md 的任務追蹤）
-- Phase 1：待補
+- Phase 1：基礎使用者／角色資料表（簡化版）
+- Phase 4：企業式 JWT 登入、角色權限收斂
+- Phase 4.1：`roles`／`permissions`／`user_roles`／`role_permissions` 多對多 RBAC 模型
+- Phase 5：全域授權改採 permission code 與 fail closed，補齊全部 ViewSet 權限檢查
 
 ### 採購稽核與流程健康總覽
 
@@ -216,7 +225,6 @@ owner: Robin
 | 詢價中提到的供應商不在系統供應商清單內 | Mask 節點比對合作中供應商清單，比對不到即攔截 | 不送 LLM、不進複核佇列，即時回覆使用者「查無供應商，請確認名稱或先建檔」 |
 | 詢價中供應商名稱與清單模糊相似但非精確比對（如漏字、簡稱） | 相似度比對不到精確結果時，不自動猜測身分 | 寫入「待人工複核」佇列，流程中止；管理員確認供應商身分後，用確認後的供應商重新走正常遮罩→LLM 解析流程（此時品項/數量/幣別尚未解析出來，不可跳過解析直接查詢） |
 | 詢價中金額等欄位格式無法解析（如中文數字「五萬」） | 供應商比對成功但其他欄位解析失敗時，不進複核佇列 | 即時回覆使用者請求修正格式重新輸入，不中止整體流程 |
-| LLM 生成的報價摘要文字中的數字與原始查詢值不一致（幻覺） | Django 固定比對邏輯逐一核對摘要文字中的數字 | 寫入「待人工複核」表，流程中止，不直接顯示給簽核人或申請人 |
 | 待複核案件負責的管理員剛好無法即時處理 | Gmail 通知發送給所有管理員角色使用者，而非綁定單一人 | 任一管理員可認領處理，複核頁面標記認領狀態避免重複處理衝突 |
 | 一般簽核案件路由到的角色，該角色底下使用者剛好都沒空即時處理 | Gmail 通知發送給該角色底下所有使用者，而非綁定單一人（`approvals.approver_id` 建立時為 null） | 任一符合資格的使用者可認領處理，簽核佇列頁面標記認領狀態避免重複處理衝突 |
 | 採購金額超過所有一般簽核政策的金額上限 | 路由至明確設定的最高額度業務簽核政策，不以系統管理員代簽 | 找不到任何有效政策時阻止提交並通知權限管理者補正政策 |

@@ -315,7 +315,7 @@ RED（寫失敗的測試）
 | 邏輯 | Django + DRF |
 | 記憶 | PostgreSQL |
 | 身份 | djangorestframework-simplejwt（Vue↔Django）＋固定 API Key（n8n↔Django） |
-| AI | Gemini / Groq |
+| AI | Gemini |
 | 連線 | n8n（自架 Docker，AI 流程協調層） |
 | 通知 | Gmail（n8n Gmail 節點） |
 | 版控 | GitHub |

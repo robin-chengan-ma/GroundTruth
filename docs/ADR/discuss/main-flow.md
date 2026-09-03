@@ -353,3 +353,17 @@ Phase 4.1 的詳細 ERD、狀態機、RBAC、遷移與測試設計見 `docs/ADR/
 - `frontend/src/views/ManualReviewView.vue`／`frontend/src/types/api.ts`：改讀持久化欄位，新增重試按鈕。
 - 測試：`tests/test_manual_review_service.py`（CheckConstraint、`retry_resume()`）、`tests/test_inquiry_resume_service.py`／`tests/test_inquiry_service.py`（新錯誤代碼／例外）、`tests/test_api_phase3.py`（`decide`／`retry-resume` API）。
 - 未驗證範圍：併發重試（兩個管理員同時對同一失敗案件呼叫 retry-resume）僅靠 `select_for_update()` 鎖列防護，未寫專門的併發測試（DB 層鎖語意本身有保證，邏輯上第二個請求會在第一個提交後看到 `resume_status` 已變成 `pending`／`succeeded`／`failed` 而非 `failed`，因而被 409 擋下，但未實際跑多執行緒/多連線測試驗證）。
+
+## 2026-09-02 [標籤：使用者] 確認 Groq 從未實際串接，技術棧移除
+
+**狀態**：accepted
+
+**背景**：SPEC.md／AGENTS.md 技術棧表格自早期規劃起將 AI 欄位寫成「Gemini / Groq」，本次文件盤點時 Robin 確認實際上從未串接 Groq，只用 Gemini。
+
+**討論內容**：搜尋 `backend/`、`n8n/`、`.env.example` 等現行程式碼與設定，確認除了文件（SPEC.md 技術棧表格、AGENTS.md 專案覆寫技術棧表格、本檔 2026-XX-XX 版本鎖定政策條目）之外，程式碼、環境變數、n8n workflow 均無任何 Groq 相關設定或呼叫。
+
+**決策**：技術棧現行狀態自本條目起僅列 Gemini；SPEC.md、AGENTS.md 的技術棧表格同步移除 Groq。上方版本鎖定政策條目（第 112 行「n8n、LLM API（Gemini/Groq）不鎖版號...」）為決策當下的歷史記錄予以保留，不回溯改寫，以此條目做為現況更新的依據。
+
+**理由**：Reference／SPEC 只反映現行有效狀態，程式碼中不存在的技術棧項目繼續留在文件會誤導後續開發或除錯方向；ADR 保留歷史決策文字不可覆寫，因此用新增條目取代直接編輯舊文字的方式處理。
+
+**後果**：`docs/specs/SPEC.md` 技術棧表格 AI 列、`AGENTS.md` 專案覆寫技術棧表格 AI 列已同步修正為「Gemini」。無程式碼變動、無需新增測試。

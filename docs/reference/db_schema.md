@@ -267,21 +267,43 @@ Forward 使用 `CREATE INDEX CONCURRENTLY`，Reverse 使用 `DROP INDEX CONCURRE
 
 ## suppliers（供應商，CRM）
 
+Phase 1 只有 `id／name／tier／created_at`；`code／status／tax_id／contact／payment_terms／is_active／updated_at`
+由 crm `0002_supplier_code_supplier_contact_supplier_is_active_and_more` 新增，欄位設計理由見上方
+「suppliers 擴充」。
+
 | Column | 型別 | Nullable | Default | PK | FK | Index/Unique | 說明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | 否 | auto | PK | | | |
 | name | varchar(200) | 否 | — | | | Unique | |
 | tier | varchar(20) | 否 | 'normal' | | | | 合作等級：priority／normal／watch，資訊呈現用途，不驅動流程邏輯 |
+| code | varchar(50) | 是 | null | | | Partial Unique（非 null 時） | 企業內部供應商代碼 |
+| status | varchar(20) | 否 | 'active' | | | Check active/on_hold/blocked | 供應商狀態 |
+| tax_id | varchar(30) | 是 | null | | | Partial Unique（非 null 時） | 統一編號或稅籍識別碼 |
+| contact | jsonb | 否 | `{}` | | | JSON object check | 聯絡資料；API 依權限遮罩 |
+| payment_terms | varchar(100) | 否 | 空字串 | | | | 預設付款條件 |
+| is_active | boolean | 否 | true | | | | 是否允許用於新交易 |
 | created_at | timestamp | 否 | now() | | | | |
+| updated_at | timestamptz | 否 | DB now() | | | updated_at trigger | 最後更新時間（由資料庫 trigger 維護） |
 
 ## products（產品，ERP）
+
+Phase 1 只有 `id／name／price／currency`；`category／sku／description／specifications／unit_of_measure／
+is_active／updated_at` 由 erp `0002_productcategory_product_description_and_more` 新增，欄位設計理由見
+上方「product_categories 與 products 擴充」。
 
 | Column | 型別 | Nullable | Default | PK | FK | Index/Unique | 說明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | 否 | auto | PK | | | |
 | name | varchar(200) | 否 | — | | | | |
+| category_id | bigint | 是 | null | | → product_categories.id（PROTECT） | | 舊資料可暫為 null |
+| sku | varchar(100) | 是 | null | | | Partial Unique（非 null 時） | 企業內部品項代碼 |
+| description | text | 否 | 空字串 | | | | 品項描述 |
+| specifications | jsonb | 否 | `{}` | | | JSON object check | 依產品類別定義驗證的規格值 |
+| unit_of_measure | varchar(20) | 否 | 'EA' | | | | 計量單位 |
+| is_active | boolean | 否 | true | | | | 品項是否可用於新交易 |
 | price | decimal(12,2) | 否 | — | | | | 成本/單價 |
 | currency | varchar(10) | 否 | 'TWD' | | | | |
+| updated_at | timestamptz | 否 | DB now() | | | updated_at trigger | 最後更新時間（由資料庫 trigger 維護） |
 
 ## quotes（採購單）
 
@@ -328,12 +350,19 @@ Quote 依現行金額門檻補建一筆路由；不修改已有 Approval 的案�
 
 ## purchase_suggestions（採購建議）
 
+> C6-3（驗收差異與補交授權，見同檔對應段落）新增 `source_movement_id`／`purchase_request_id`
+> 兩個 nullable FK 欄位並擴充 `status` 為 4 個值，`suggested_qty` 型別由 int 改為
+> decimal(14,3)，對應 erp migration `0005_inspection_variances.py`；欄位定義以
+> `backend/apps/erp/models.py` 的 `PurchaseSuggestion` model 為準。
+
 | Column | 型別 | Nullable | Default | PK | FK | Index/Unique | 說明 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | id | bigint | 否 | auto | PK | | | |
 | product_id | bigint | 否 | — | | → products.id | Index | |
-| suggested_qty | int | 否 | — | | | | 系統建議本次補貨數量，算法於實作階段定案 |
-| status | varchar(20) | 否 | 'pending' | | | | pending／processed／dismissed |
+| suggested_qty | decimal(14,3) | 否 | — | | | | 補足目標庫存所需的建議數量 |
+| status | varchar(20) | 否 | 'pending' | | | | pending／in_progress／processed／dismissed |
+| source_movement_id | bigint | 是 | null | | → inventory_movements.id（PROTECT） | | 觸發建議的庫存流水；既有建議可為 NULL |
+| purchase_request_id | bigint | 是 | null | | → purchase_requests.id（PROTECT） | | 由本建議轉成的採購需求 |
 | created_at | timestamp | 否 | now() | | | | |
 
 ## manual_review_queue（待人工複核佇列）

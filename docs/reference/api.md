@@ -41,7 +41,7 @@ SPEC「搜尋、篩選、分頁」缺口補齊：`suppliers`、`products`、`pro
 
 | Method / Route | 認證 | Request | Response／規則 |
 | --- | --- | --- | --- |
-| `POST /api/v1/auth/login/` | 無 | `{"email":"employee@example.com","password":"example-only"}` | 200 回 `access` 與 `id/name/email/role/permissions`；`permissions` 為所有生效 UserRole 合併、去重且排序的權限碼。設定 Refresh HttpOnly Cookie 與 CSRF Cookie。帳號不存在或密碼錯誤統一回 401 `帳號或密碼錯誤` |
+| `POST /api/v1/auth/login/` | 無 | `{"email":"employee@example.com","password":"example-only"}` | 200 回 `{"access": "...", "user": {"id","name","email","role","permissions"}}`（使用者欄位包在 `user` 物件內，不是攤平在頂層）；`permissions` 為所有生效 UserRole 合併、去重且排序的權限碼。設定 Refresh HttpOnly Cookie 與 CSRF Cookie。帳號不存在或密碼錯誤統一回 401 `帳號或密碼錯誤` |
 | `POST /api/v1/auth/refresh/` | Refresh Cookie + `X-CSRFToken` | 無 | 200 回新 `access` 並 rotation Refresh Cookie；舊 Token 立即撤銷。CSRF 錯誤回 403，Token 缺漏／失效／重放回 401 |
 | `POST /api/v1/auth/logout/` | Refresh Cookie + `X-CSRFToken` | 無 | 撤銷目前 Refresh Session、刪除 Cookie，回 204；無 Cookie 時維持冪等 |
 | `GET /api/v1/auth/me/` | Bearer Access Token | 無 | 200 回 `id/name/email/role/permissions`；權限來自目前有效的多角色 RBAC；無效或過期 Token 回 401 |
@@ -69,7 +69,9 @@ rotation／撤銷狀態，不保存 Token 明文。
 | quote-requirement-results | 採購人員於報價提交後讀取評估結果 | 只有 `requirement.waive` 可對 fail／not_provided 填理由例外核准 |
 | goods-receipts | 申請人只見自己需求；`receipt.record`、`inspection.decide`、`audit.read` 可見全部 | 只有 `receipt.record` 可建立草稿與送驗；不開放通用更新／刪除 |
 | inspection-variances | `purchase_order.manage`、`receipt.record`、`inspection.decide`、`audit.read` 可唯讀全部 | 只有 `purchase_order.manage` 可建立、修改／刪除草稿與送出；正式案件不可以通用 CRUD 改寫 |
-| manual-review-queue、audit-logs、audit-dashboard/stats | admin（`audit.read`） | 複核僅 `claim`／`decide`；audit logs 與統計總覽全部唯讀 |
+| manual-review-queue | 具 `manual_review.decide`（含 list／retrieve；未套用 `admin` 角色字串判斷） | list／retrieve 為標準 DRF `PageNumberPagination`（`count／next／previous／results`，`?page=`），與下方共用分頁信封不同；`claim`／`decide`／`retry-resume` 見對應章節 |
+| audit-logs | 具 `audit.read` | 唯讀；同樣是標準 DRF `PageNumberPagination`（`count／next／previous／results`），不是下方共用分頁信封 |
+| audit-dashboard/stats | 具 `audit.read` | 統計總覽，非清單端點，不分頁 |
 
 ## 主檔管理 API（供應商／品項／分類）
 
@@ -79,7 +81,7 @@ Phase 6 補齊：`SupplierSerializer`／`ProductSerializer` 原本只回傳極�
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
 | --- | --- | --- | --- |
-| `GET／POST /api/v1/suppliers/` | 讀 `master_data.read`／寫 `master_data.manage` | GET 支援 `page`／`page_size`／`?search=<name 或 code>`／`?status=<active\|on_hold\|blocked>`／`?tier=<priority\|normal\|watch>`（見上方 Phase 6 分頁慣例） | GET 200 分頁清單；POST 201；欄位含 `id/name/tier/code/status/tax_id/contact/payment_terms/is_active/created_at/updated_at` |
+| `GET／POST /api/v1/suppliers/` | 讀 `master_data.read`／寫 `master_data.manage` | GET 支援 `page`／`page_size`／`?search=<name 或 code>`／`?status=<active\|on_hold\|blocked>`／`?tier=<priority\|normal\|watch>`／`?is_active=<true\|false>`（見上方 Phase 6 分頁慣例） | GET 200 分頁清單；POST 201；欄位含 `id/name/tier/code/status/tax_id/contact/payment_terms/is_active/created_at/updated_at` |
 | `PATCH／PUT /api/v1/suppliers/{id}/` | `master_data.manage` | 可局部更新任何欄位 | 200 |
 | `DELETE /api/v1/suppliers/{id}/` | `master_data.manage` | 不提供實體刪除 | 409 `physical_delete_forbidden`，改用 PATCH `is_active=false` |
 | `GET／POST /api/v1/products/` | 讀 `master_data.read`／寫 `master_data.manage` | GET 支援 `page`／`page_size`／`?search=<name 或 sku>`／`?category=<category_id>`／`?is_active=<true\|false>`（見上方 Phase 6 分頁慣例；`?search=` 亦供 n8n 依 LLM 解析出的品項名稱查詢，見下方「GET /api/v1/suppliers/?search=、GET /api/v1/products/?search=」） | GET 200 分頁清單；POST 201；欄位含 `id/name/category/category_name/sku/description/specifications/unit_of_measure/is_active/price/currency/updated_at`；`category` 可為 `null` |
@@ -115,7 +117,7 @@ Quote、Supplier Quote、簽核或採購單。
 | --- | --- | --- | --- |
 | `GET /api/v1/purchase-request-drafts/` | `purchase_request.read_own` | 無；只列本人 draft | 200 草稿陣列 |
 | `GET /api/v1/purchase-request-drafts/{id}/` | `purchase_request.read_own` | 非本人或非 draft 統一回 404 | 200 完整草稿 |
-| `POST /api/v1/purchase-request-drafts/` | `purchase_request.create` | `purpose`、`currency`、一至多筆 `items`、一至多個 `supplier_ids` | 201 完整草稿 |
+| `POST /api/v1/purchase-request-drafts/` | `purchase_request.create` | `purpose`、`currency`、一至多筆 `items`、一至多個 `supplier_ids`；選填 `candidate_token`（見下方「POST /api/v1/inquiries/parse/」，用於稽核統計比對，不影響草稿是否能建立） | 201 完整草稿 |
 | `PATCH /api/v1/purchase-request-drafts/{id}/` | `purchase_request.edit_draft` | 必帶目前 `version`；可更新目的、日期、幣別、完整明細或候選供應商 | 200 新版本草稿 |
 | `DELETE /api/v1/purchase-request-drafts/{id}/` | `purchase_request.edit_draft` | 只允許本人 draft；先移除 draft RFQ 再刪除草稿 | 204 |
 | `POST /api/v1/purchase-request-drafts/{id}/preview/` | `purchase_request.read_own` | `{"version":1}`；不寫入正式單據 | 200 結構化供應商／品項試算 |
@@ -164,6 +166,8 @@ Quote、Supplier Quote、簽核或採購單。
 | --- | --- | --- |
 | `page` | 否 | 正整數，預設 `1` |
 | `page_size` | 否 | 只允許 `10`、`20`、`50`，預設 `20` |
+| `search` | 否 | 模糊比對申請編號、用途、品項名稱或候選供應商名稱（`icontains`，不分大小寫） |
+| `status` | 否 | 精確比對 `PurchaseRequest.Status`；不是合法值回 400 |
 
 **Response（200，假資料）**：
 
@@ -228,6 +232,29 @@ Quote、Supplier Quote、簽核或採購單。
 
 詳情包含需求欄位、候選供應商與完整品項快照，僅供唯讀追溯；PATCH／PUT／DELETE 回 405。
 
+### POST `/api/v1/purchase-requests/{id}/withdraw/`
+
+**認證／權限**：Bearer Access Token；需 `purchase_request.withdraw`。只允許本人已建立的 Purchase Request；非本人與不存在資源回 404。
+
+**Request Body（假資料）**：
+
+```json
+{
+  "version": 3,
+  "reason": "供應商臨時無法交貨，改由其他管道採購"
+}
+```
+
+`reason` 為必填、去除前後空白後不得為空字串；`version` 須與目前資料列版本一致（樂觀鎖）。
+
+**規則**：只有 `submitted`／`sourcing`／`awarding`／`approval` 狀態可撤回；`draft` 應改用刪除草稿，其他狀態不可撤回。撤回會在同一 transaction 內：取消所有尚未結束（非 `closed`／`cancelled`）的 RFQ 與受邀供應商紀錄、取消尚在 `draft`／`submitted` 的得標決議與對應簽核案件，最後把需求本身標記 `cancelled` 並記錄撤回原因。這是 legacy `POST /api/v1/quotes/{id}/withdraw/` 的正式替代端點（見下方「Legacy API」章節）。
+
+**Response**：
+- 200：回傳撤回後的 `PurchaseRequestDetailSerializer` 資料（`status` 為 `cancelled`）
+- 404：找不到指定的採購需求（含非本人案件，`code: not_found`）
+- 409：`version` 不一致或目前狀態不可撤回，兩種情況同樣回 `code: version_conflict`
+- 400：`reason` 空白（`code: invalid_draft`）
+
 ## 採購建議 API
 
 | Method / Route | 必要權限 | Request／規則 | 成功回應 |
@@ -235,7 +262,7 @@ Quote、Supplier Quote、簽核或採購單。
 | `GET /api/v1/purchase-suggestions/` | `purchase_suggestion.read` | 支援 `page`／`page_size`／`?search=<品項名稱>`／`?status=<pending\|in_progress\|processed\|dismissed>`（見上方 Phase 6 分頁慣例）；回傳品項、建議數量、狀態、來源 movement 與轉成的 request | 200 分頁清單（`{count,page,page_size,total_pages,results}`，Phase 6 起改用共用分頁工具，取代原本的全域 `PageNumberPagination`） |
 | `GET /api/v1/purchase-suggestions/{id}/` | `purchase_suggestion.read` | 通用資源唯讀 | 200 建議詳情 |
 | `POST /api/v1/purchase-suggestions/{id}/convert/` | `purchase_request.create` | `supplier_ids` 為非空、不重複的有效供應商 ID；可傳 `purpose`、`needed_by`、`currency`；僅 pending 且尚未轉單可執行 | 201；建立本人 Purchase Request draft 並回傳 `purchase_request_id` |
-| `POST /api/v1/purchase-suggestions/{id}/dismiss/` | admin | 無；僅 pending 且尚未轉單可執行 | 200；狀態轉 dismissed |
+| `POST /api/v1/purchase-suggestions/{id}/dismiss/` | `purchase_suggestion.dismiss` | 無；僅 pending 且尚未轉單可執行 | 200；狀態轉 dismissed |
 
 轉單與忽略都使用 transaction 及 row lock；競態、重複轉單、非 pending 或已綁定草稿回 409，無權限回 403，資源不存在回 404，供應商或格式無效回 400。轉成的草稿提交後建議轉 in_progress；對應需求 completed 後轉 processed。
 
@@ -672,7 +699,7 @@ FR-3／NFR-1：Django 先以固定程式將自然語言中的已建檔供應商�
 }
 ```
 
-**Response（200）**：回傳 `purpose`、`needed_by`、`currency`、`assistant_message`、`items`、`supplier_candidates`、`missing_fields`、`ready_for_draft` 與 `supplier_product_coverage`。`items[].product_id` 及 `supplier_candidates[].supplier_id` 只在上述安全規則唯一對應且主檔可用時回傳，其餘為 `null` 並列入 `missing_fields`。數量必須大於 0 且最多三位小數。`supplier_product_coverage` 使用下述矩陣列格式。
+**Response（200）**：回傳 `purpose`、`needed_by`、`currency`、`assistant_message`、`items`、`supplier_candidates`、`missing_fields`、`ready_for_draft`、`supplier_product_coverage` 與 `candidate_token`。`items[].product_id` 及 `supplier_candidates[].supplier_id` 只在上述安全規則唯一對應且主檔可用時回傳，其餘為 `null` 並列入 `missing_fields`。數量必須大於 0 且最多三位小數。`supplier_product_coverage` 使用下述矩陣列格式。`candidate_token` 是後端簽章過的候選內容憑證（「採購稽核與流程健康總覽」FR-1 直接採用／人工修正統計用），前端建立草稿時應原樣帶回 `POST /api/v1/purchase-request-drafts/` 的 `candidate_token` 欄位（選填，供比對使用者最終確認內容與 AI 原始候選的差異；憑證只在單次候選流程內有效，不落地存原始文字或欄位值）。
 
 **驗證與錯誤**：
 
