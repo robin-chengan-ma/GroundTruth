@@ -55,9 +55,13 @@ def claim_review(review_id, user_id) -> ManualReviewQueue:
     return review
 
 
-def decide_review(review_id, user_id, decision, supplier_id=None) -> ManualReviewQueue:
+def decide_review(review_id, user_id, decision, supplier_id=None, reason=None) -> ManualReviewQueue:
     if decision not in (ManualReviewQueue.Decision.APPROVED, ManualReviewQueue.Decision.REJECTED):
         raise ManualReviewError("decision 必須是 approved 或 rejected")
+
+    normalized_reason = str(reason or "").strip()
+    if decision == ManualReviewQueue.Decision.REJECTED and not normalized_reason:
+        raise ManualReviewError("駁回時必須填寫駁回原因")
 
     review = _get_review(review_id)
     _ensure_active_review(review)
@@ -81,6 +85,9 @@ def decide_review(review_id, user_id, decision, supplier_id=None) -> ManualRevie
         review.status = ManualReviewQueue.Status.RESOLVED
         review.decision = decision
         update_fields = ["status", "decision", "updated_at"]
+        if decision == ManualReviewQueue.Decision.REJECTED:
+            review.rejection_reason = normalized_reason
+            update_fields.append("rejection_reason")
         if should_resume:
             # 先落地 pending：即使接下來的續傳處理過程中服務被中斷，管理員也看得到
             # 「有一筆案件卡在續傳中」，而不是完全沒有紀錄（見 retry_resume() 的重試設計）。
@@ -98,6 +105,14 @@ def decide_review(review_id, user_id, decision, supplier_id=None) -> ManualRevie
     # 交易確定提交後才重新解析／建立草稿——DB 決議結果是真的，不因為後續處理失敗而回滾。
     if should_resume:
         _execute_resume_and_persist(review)
+
+    # 駁回通知也放在交易提交之後才寄，且是 best-effort：通知失敗不影響已經落地的決議結果
+    # （見 services/notification_service.notify_manual_review_rejected，同一套「非阻斷」設計，
+    # 比照 notify_manual_review_created 的既有模式）。
+    if decision == ManualReviewQueue.Decision.REJECTED:
+        from services.notification_service import notify_manual_review_rejected
+
+        notify_manual_review_rejected(review)
 
     return review
 

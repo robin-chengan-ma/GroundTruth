@@ -55,7 +55,14 @@ updated: 2026-09-03
    通知（FR-6b／FR-8）」（`n8n-init` 已自動匯入，但刻意不自動啟用），點「寄送 Gmail」
    節點、在 Credential 欄位選「Create New」完成一次 Google 帳號 OAuth 授權（Sign in
    with Google，這一步無法自動化），完成後回到 workflow 列表手動點右上角 Active
-   開關啟用。
+   開關啟用。**注意：這個 Active 開關每次 `docker compose up` 都要重新確認**——
+   `n8n-init` 每次啟動都會重新 `import:workflow` 這支流程（見
+   `n8n/scripts/init-workflows.sh`），來源檔案 `notification-flow.json` 本身沒有
+   標記 `active: true`，匯入會把 Active 狀態重置回關閉，即使上一次已經手動啟用過也
+   一樣；OAuth 憑證本身不會遺失，只有 Active 開關需要重新點一次（2026-09-03 Robin
+   實測重現，詳見 `docs/ADR/debug/phase7-integration.md`）。關閉狀態下 Django 端
+   `notify_manual_review_created()` 等呼叫會 best-effort 靜默失敗、n8n 完全不會留下
+   Execution 紀錄、前端也不會顯示任何錯誤，不容易察覺，务必每次重啟後手動確認一次。
 
 5. 開啟 <http://localhost:5173> 進入系統。
 
@@ -105,11 +112,17 @@ updated: 2026-09-03
   2026-09-03 條目
 - `n8n-init` 自動啟用「採購需求候選解析」workflow **經實測證實不可靠**：CLI 指令
   （`update:workflow --active=true`）只改資料庫欄位，不會通知已在跑的 n8n 服務重新註冊
-  webhook，UI 顯示 Published 但打正式 webhook 仍可能回 404。**目前確認有效的解法**：到
-  n8n 畫面把該 workflow 的 Active 開關關掉再開一次，即可讓服務重新註冊（Robin
-  2026-09-03 實測驗證過）。是否要投資改用 n8n Public API 做到完全自動化，屬待決的架構
-  決策，見 `docs/ADR/debug/phase7-integration.md`
-- Gmail 通知的 OAuth 授權與實際收信尚未實測
+  webhook，**畫面顯示 Active／Published 不代表已註冊**（2026-09-03 Robin 實測重現：兩支
+  workflow 畫面都顯示 Active／Published，打 webhook／觸發重試續傳卻完全沒有 Execution
+  紀錄）。**目前確認有效的解法**：不能只確認畫面狀態是開的就好，要到 n8n 畫面把該
+  workflow 的 Active 開關**實際關掉、再重新打開一次**，強迫服務重新註冊（Robin
+  2026-09-03 實測驗證過，含「候選解析」與「通知」兩支 workflow）。是否要投資改用 n8n
+  Public API 做到完全自動化，屬待決的架構決策，見 `docs/ADR/debug/phase7-integration.md`
+- Gmail 通知的 OAuth 授權與實際收信**已於 2026-09-03 由 Robin 實測通過**（透過「供應商
+  模糊比對」情境觸發，確認 Django 業務事件→`notification_service`→n8n→Gmail 完整
+  端到端可收到信；demo 帳號預設信箱為 `@groundtruth.demo` 假網域，實際收件測試須暫時
+  改用真實信箱）。過程中確認「通知」workflow 跟「採購需求候選解析」一樣，`n8n-init`
+  每次重啟都會把 Active 開關重置回關閉，需要每次手動重新啟用一次，見上方步驟 4 提醒
 - 展示腳本（上方步驟 1–7）跨 Backend／Frontend／n8n／PostgreSQL 全部由 Docker Compose
   同時啟動的完整瀏覽器端到端尚未實測；本次只驗證到服務啟動與 webhook 可正確觸發，尚未
   走過完整業務流程；Phase 4／6 的瀏覽器驗收目前是在 Vite 本機開發伺服器下進行，API 流程

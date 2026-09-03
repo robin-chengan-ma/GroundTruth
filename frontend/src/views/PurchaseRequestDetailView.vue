@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { api } from '../api/client'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -80,6 +81,16 @@ onBeforeUnmount(() => {
               <div><dt>建立時間</dt><dd>{{ formatDateTime(purchaseRequest.created_at) }}</dd></div>
               <div><dt>最後更新</dt><dd>{{ formatDateTime(purchaseRequest.updated_at) }}</dd></div>
             </dl>
+            <p v-if="purchaseRequest.copied_from_request_no" class="muted-text">此需求複製自已駁回的 {{ purchaseRequest.copied_from_request_no }}，方便核對是修正重送、不是全新案子。</p>
+            <p v-else-if="purchaseRequest.copied_from_review_id" class="muted-text">此需求複製自已駁回的人工複核案件 #{{ purchaseRequest.copied_from_review_id }}，方便核對是修正重送、不是全新案子。</p>
+            <div v-if="purchaseRequest.status === 'rejected'" class="rejected-copy-action">
+              <span v-if="purchaseRequest.copied_to_request_no" class="muted-text">已複製為 {{ purchaseRequest.copied_to_request_no }}</span>
+              <RouterLink
+                v-else
+                class="secondary-button"
+                :to="{ path: '/inquiry', query: { copied_from_request: String(purchaseRequest.id) } }"
+              >複製為新草稿</RouterLink>
+            </div>
           </section>
 
           <section class="detail-section">

@@ -131,15 +131,15 @@ onMounted(load)
       <input v-model="search" type="search" aria-label="搜尋供應商" placeholder="搜尋名稱或內部代碼…" />
       <select aria-label="狀態篩選" :value="filters.status" @change="applyFilter('status', ($event.target as HTMLSelectElement).value)">
         <option value="">全部狀態</option>
-        <option value="active">active</option>
-        <option value="on_hold">on_hold</option>
-        <option value="blocked">blocked</option>
+        <option value="active">啟用中</option>
+        <option value="on_hold">暫停合作</option>
+        <option value="blocked">已封鎖</option>
       </select>
       <select aria-label="等級篩選" :value="filters.tier" @change="applyFilter('tier', ($event.target as HTMLSelectElement).value)">
         <option value="">全部等級</option>
-        <option value="priority">priority</option>
-        <option value="normal">normal</option>
-        <option value="watch">watch</option>
+        <option value="priority">優先供應商</option>
+        <option value="normal">一般</option>
+        <option value="watch">觀察中</option>
       </select>
       <button type="submit" class="secondary-button">搜尋</button>
       <button type="button" class="secondary-button" @click="resetFilters">清除條件</button>
@@ -158,7 +158,7 @@ onMounted(load)
         <tbody>
           <tr v-for="supplier in suppliers" :key="supplier.id">
             <td>{{ supplier.name }}</td>
-            <td>{{ supplier.tier }}</td>
+            <td><StatusBadge :status="supplier.tier" /></td>
             <td>{{ supplier.code || '—' }}</td>
             <td>{{ supplier.tax_id || '—' }}</td>
             <td>{{ supplier.payment_terms || '—' }}</td>
@@ -194,17 +194,17 @@ onMounted(load)
             <div>
               <label for="supplier-tier">等級</label>
               <select id="supplier-tier" v-model="form.tier">
-                <option value="priority">priority</option>
-                <option value="normal">normal</option>
-                <option value="watch">watch</option>
+                <option value="priority">優先供應商</option>
+                <option value="normal">一般</option>
+                <option value="watch">觀察中</option>
               </select>
             </div>
             <div>
               <label for="supplier-status">狀態</label>
               <select id="supplier-status" v-model="form.status">
-                <option value="active">active</option>
-                <option value="on_hold">on_hold</option>
-                <option value="blocked">blocked</option>
+                <option value="active">啟用中</option>
+                <option value="on_hold">暫停合作</option>
+                <option value="blocked">已封鎖</option>
               </select>
             </div>
           </div>

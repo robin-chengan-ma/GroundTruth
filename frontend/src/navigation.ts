@@ -26,6 +26,11 @@ export const navigationGroups: NavigationGroup[] = [
         to: '/purchase-requests',
         permissions: ['purchase_request.read_own'],
       },
+      {
+        label: '詢價已駁回清單',
+        to: '/rejected-inquiries',
+        permissions: ['purchase_request.read_own'],
+      },
     ],
   },
   {

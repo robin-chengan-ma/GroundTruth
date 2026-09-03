@@ -14,6 +14,7 @@ import ManualReviewView from '../views/ManualReviewView.vue'
 import ProductListView from '../views/ProductListView.vue'
 import PurchaseOrderListView from '../views/PurchaseOrderListView.vue'
 import PurchaseRequestListView from '../views/PurchaseRequestListView.vue'
+import RejectedInquiryListView from '../views/RejectedInquiryListView.vue'
 import PurchaseSuggestionListView from '../views/PurchaseSuggestionListView.vue'
 import RfqListView from '../views/RfqListView.vue'
 import SupplierListView from '../views/SupplierListView.vue'
@@ -42,6 +43,12 @@ const router = createRouter({
       path: '/purchase-requests/:id',
       name: 'purchase-request-detail',
       component: PurchaseRequestListView,
+      meta: { permissions: ['purchase_request.read_own'] },
+    },
+    {
+      path: '/rejected-inquiries',
+      name: 'rejected-inquiries',
+      component: RejectedInquiryListView,
       meta: { permissions: ['purchase_request.read_own'] },
     },
     {

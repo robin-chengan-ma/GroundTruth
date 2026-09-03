@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
 import ListPagination from '../components/ListPagination.vue'
 import PageHeader from '../components/PageHeader.vue'
+import StatusBadge from '../components/StatusBadge.vue'
 import { useListQuery } from '../composables/useListQuery'
 import { useAuthStore } from '../stores/auth'
 import type { PaginatedList, Product, Supplier, SupplierProduct } from '../types/api'
@@ -195,9 +196,9 @@ onMounted(load)
       <input v-model="search" type="search" aria-label="搜尋供應商品項" placeholder="搜尋供應商、品項或供應商料號…" />
       <select aria-label="品質狀態篩選" :value="filters.quality_status" @change="applyFilter('quality_status', ($event.target as HTMLSelectElement).value)">
         <option value="">全部品質狀態</option>
-        <option value="qualified">qualified</option>
-        <option value="conditional">conditional</option>
-        <option value="blocked">blocked</option>
+        <option value="qualified">合格</option>
+        <option value="conditional">有條件合格</option>
+        <option value="blocked">已封鎖</option>
       </select>
       <select aria-label="啟用狀態篩選" :value="filters.is_active" @change="applyFilter('is_active', ($event.target as HTMLSelectElement).value)">
         <option value="">全部啟用狀態</option>
@@ -226,7 +227,7 @@ onMounted(load)
               <td>{{ item.supplier_sku || '—' }}</td>
               <td>{{ item.lead_time_days }}</td>
               <td>{{ formatQuantity(item.minimum_order_quantity) }}</td>
-              <td>{{ item.quality_status }}</td>
+              <td><StatusBadge :status="item.quality_status" /></td>
               <td>
                 <span v-if="currentPrice(item)">{{ formatMoney(currentPrice(item)!.unit_price, currentPrice(item)!.currency) }}</span>
                 <span v-else>—</span>

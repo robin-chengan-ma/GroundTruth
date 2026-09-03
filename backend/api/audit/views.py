@@ -6,6 +6,8 @@ from rest_framework.views import APIView
 from api.core.permissions import HasPermissionCode
 from lib.authentication import InternalApiKeyAuthentication
 from lib.jwt_authentication import BusinessJwtAuthentication
+from apps.audit.models import ManualReviewQueue
+from lib.pagination import paginate_response
 from repositories.audit import AuditLogRepository, ManualReviewQueueRepository
 from schemas.audit import AuditLogSerializer, ManualReviewQueueSerializer
 from services.audit_dashboard_service import compute_dashboard_stats
@@ -31,10 +33,32 @@ class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [HasPermissionCode]
 
     def get_permissions(self):
-        self.required_permission = (
-            "manual_review.claim" if self.action == "claim" else "manual_review.decide"
-        )
+        if self.action == "mine":
+            # 我的採購需求頁面用：申請人查自己的案件，不需要人工複核權限
+            # （Robin 2026-09-03 決策，見「駁回不通知申請人」問題三的選項 B 修復）。
+            self.required_permission = "purchase_request.read_own"
+        else:
+            self.required_permission = (
+                "manual_review.claim" if self.action == "claim" else "manual_review.decide"
+            )
         return super().get_permissions()
+
+    @action(detail=False, methods=["get"], url_path="mine")
+    def mine(self, request):
+        """列出自己被駁回、且因駁回當下尚未建立 PurchaseRequest 而不會出現在
+        「我的採購需求」正式清單裡的 supplier_fuzzy_match 案件（只回自己送出的，
+        不含其他人的案件；hallucination_mismatch 是舊版 Quote 流程，這次不處理，
+        範圍限定同問題三）。獨立頁「詢價已駁回清單」專用，依駁回/更新時間新到舊排序，
+        並比照 `/purchase-requests/` 的分頁慣例回傳 {count, page, page_size, total_pages, results}
+        （2026-09-03 決策，見「詢價已駁回清單獨立頁」ADR）。"""
+        reviews = ManualReviewQueueRepository.all().filter(
+            requester_id=request.user.id,
+            review_type=ManualReviewQueue.ReviewType.SUPPLIER_FUZZY_MATCH,
+            decision=ManualReviewQueue.Decision.REJECTED,
+        ).order_by("-updated_at")
+        return paginate_response(
+            request, reviews, serialize=lambda page: ManualReviewQueueSerializer(page, many=True).data
+        )
 
     def _resume_conflict_or_error_response(self, exc):
         if isinstance(exc, LegacyManualReviewRetiredError):
@@ -70,12 +94,13 @@ class ManualReviewQueueViewSet(viewsets.ReadOnlyModelViewSet):
         """
         decision = request.data.get("decision")
         supplier_id = request.data.get("supplier_id")
+        reason = request.data.get("reason")
 
         if decision is None:
             return Response({"detail": "decision 為必填"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            review = decide_review(pk, request.user.id, decision, supplier_id=supplier_id)
+            review = decide_review(pk, request.user.id, decision, supplier_id=supplier_id, reason=reason)
         except ManualReviewError as exc:
             return self._resume_conflict_or_error_response(exc)
 

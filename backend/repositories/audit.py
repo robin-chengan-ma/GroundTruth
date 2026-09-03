@@ -18,7 +18,7 @@ class AuditLogRepository:
 
     @staticmethod
     def all():
-        return AuditLog.objects.select_related("user", "quote").order_by("id")
+        return AuditLog.objects.select_related("user", "quote").order_by("-id")
 
     @staticmethod
     def record(**kwargs):

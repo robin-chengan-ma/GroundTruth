@@ -11,7 +11,7 @@ from django.db.models import Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from apps.audit.models import AuditLog
+from apps.audit.models import AuditLog, ManualReviewQueue
 from apps.crm.models import Supplier
 from apps.erp.models import Product
 from apps.procurement.models import (
@@ -180,6 +180,41 @@ def _replace_suppliers(request, supplier_ids):
 
 
 @transaction.atomic
+def _resolve_copied_from_review(user, review_id):
+    """複製自已駁回複核案件（人工複核駁回，選項 B 的追蹤欄位）：只有原始申請人本人、
+    且該案件確實已駁回、且尚未被複製過，才允許帶入（Robin 2026-09-03 決策：只能複製
+    一次，避免變成通用的「複製舊詢價」功能）。"""
+    if review_id in (None, ""):
+        return None
+    try:
+        review = ManualReviewQueue.objects.get(pk=review_id)
+    except ManualReviewQueue.DoesNotExist as exc:
+        raise DraftError("找不到指定的複核案件") from exc
+    if review.requester_id != user.id:
+        raise DraftError("只能複製自己被駁回的複核案件")
+    if review.decision != ManualReviewQueue.Decision.REJECTED:
+        raise DraftError("只有已駁回的複核案件可以複製")
+    if review.copies.exists():
+        raise DraftError("此複核案件已經複製過，請至原案件查看複製後的需求")
+    return review
+
+
+def _resolve_copied_from_request(user, request_id):
+    """複製自已駁回採購需求（簽核階段駁回）：同樣只能是本人擁有、已駁回、且尚未被
+    複製過的需求。"""
+    if request_id in (None, ""):
+        return None
+    try:
+        source_request = PurchaseRequestRepository.owned(user.id).get(pk=request_id)
+    except ObjectDoesNotExist as exc:
+        raise DraftError("找不到指定的採購需求") from exc
+    if source_request.status != PurchaseRequest.Status.REJECTED:
+        raise DraftError("只有已駁回的採購需求可以複製")
+    if source_request.copies.exists():
+        raise DraftError("此採購需求已經複製過，請至原需求查看複製後的草稿")
+    return source_request
+
+
 def create_draft(user, payload):
     _require_permission(user, "purchase_request.create")
     items, supplier_ids = _validate_payload(payload)
@@ -189,6 +224,8 @@ def create_draft(user, payload):
         record_candidate_confirmation(user, payload.get("candidate_token"), payload)
     except CandidateTokenError as exc:
         raise DraftError(str(exc)) from exc
+    copied_from_review = _resolve_copied_from_review(user, payload.get("copied_from_review_id"))
+    copied_from_request = _resolve_copied_from_request(user, payload.get("copied_from_request_id"))
     request = PurchaseRequest.objects.create(
         request_no=f"PR-DRAFT-{uuid4().hex.upper()}",
         requester=user,
@@ -196,6 +233,8 @@ def create_draft(user, payload):
         needed_by=_normalize_needed_by(payload.get("needed_by")),
         currency=_normalize_currency(payload.get("currency")),
         source="manual",
+        copied_from_review=copied_from_review,
+        copied_from_request=copied_from_request,
     )
     _replace_items(request, items, products)
     _replace_suppliers(request, supplier_ids)

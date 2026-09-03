@@ -461,3 +461,68 @@ A產品-辦公椅 5 張」透過瀏覽器重新解析，並附上畫面截圖佐
 （範例是否讓小模型穩定通過材質擷取）在這組情境下已獲確認；是否在更多元的輸入（例如同時有材質、尺寸、
 特色三種規格，或材質詞出現在品名之後而非之前）下依然穩定，仍未測試，維持既有已知限制範圍的一部分，
 非本次判定條件。
+## 2026-09-03 供應商模糊比對測試意外發現：「通知」workflow 每次 `docker compose up` 都會被重置回未啟用
+
+**現象**：Robin 驗收「供應商模糊比對」情境，輸入「跟優品科枝詢價，採購 A產品-辦公椅 5 張」，前端與
+人工複核佇列皆正確顯示複核案件，但沒有收到 Gmail 通知；而稍早同一天（15:09）Robin 才剛直打
+`POST /webhook/notify` 成功收到過信，兩次測試中間只隔了幾小時，「通知」workflow 的 n8n Executions
+卻完全沒有留下這次的新紀錄——不是失敗紀錄，是**完全沒有執行紀錄**。
+
+**排查過程**：檢查 n8n 畫面，「通知」workflow 的 Active 開關確認是關閉的。回頭查
+`n8n/scripts/init-workflows.sh`，確認「Gmail 通知」流程的匯入邏輯是「刻意只匯入、不呼叫發布指令」，
+且 `n8n import:workflow --input=notification-flow.json` **每次** `n8n-init` 容器啟動（也就是每次
+`docker compose up`）都會重新執行一次；用 `python3 -c "json.load(...)['active']"` 確認
+`notification-flow.json` 這個來源檔案本身沒有 `active: true` 這個欄位。對照現象：Robin 在稍早的
+session 曾手動把 Active 開關打開過（15:09 那次測試才會成功），但期間應該又執行過一次
+`docker compose up`（或 `n8n-init` 又跑了一次），把這個 workflow 重新匯入，覆蓋掉了手動開啟的
+Active 狀態，變回關閉。
+
+**根因**：`n8n import:workflow` 依 id 覆寫既有紀錄時，會以匯入檔案（`notification-flow.json`）本身
+的 `active` 欄位為準；該檔案不帶這個欄位（也刻意不像「候選解析」流程那樣在匯入後呼叫
+`publish:workflow` 嘗試自動啟用），所以只要 `n8n-init` 重跑一次，不論之前是否手動啟用過，都會被
+重置回未啟用。這跟先前已知的「候選解析」流程 `update:workflow`／`publish:workflow` 不可靠是不同
+根因（那個是 CLI 改資料庫不會通知已在跑的 process），這次是「每次重啟都會被匯入動作本身覆寫掉手動
+設定」，屬於另一種新發現的限制，影響範圍更廣：不只是「第一次要手動啟用」，是「每次重啟都要重新手動
+啟用」。
+
+**修復方式**：本次判斷為記錄既有限制、更新操作文件為主，不改自動化邏輯（是否要投資讓
+`n8n-init` 自動幫「通知」workflow 保持 Active，屬於會改變目前「OAuth 需人工、Active 開關也需人工」
+這個刻意設計的架構決策，需要 Robin 決定，本次不逕自實作）。已更新 `docs/reference/demo-guide.md`
+步驟 4，明確提醒這個開關「每次重啟都要重新確認」，並在「已知限制」區塊記錄根因與現象，讓 Robin 之後
+再次遇到「通知沒有寄出、但前端跟複核佇列都正常」時能快速定位，不用重新排查一次。
+
+**驗證方式**：Robin 到 n8n 畫面重新把「通知」workflow 的 Active 開關打開，再次觸發同一組供應商模糊
+比對輸入，n8n Executions 出現成功執行紀錄；接著把 demo 帳號 `eva@groundtruth.demo`（假網域，會
+退信）暫時改成 Robin 的真實信箱，重新觸發一次，確認 Gmail 正確收到「【待複核】供應商比對案件 #3
+待確認」通知信、無退信，完整驗證了 Django 事件→`notification_service`→n8n→Gmail 的正式業務路徑
+端到端（`docs/specs/PROGRESS.md` 先前標記「待測」的缺口至此補齊）。
+
+**未驗證範圍**：是否要投資讓 `n8n-init` 自動保持「通知」workflow 為 Active（例如比照候選解析流程
+呼叫 `publish:workflow`，或改用官方建議的 Public API），屬待決架構決策，本次不逕自實作；`eva`
+demo 帳號的 email 已改為 Robin 的真實信箱作為本次測試手段，若之後需要 `eva@groundtruth.demo`
+這個假信箱本身做其他測試（例如驗證退信情境），需注意這筆資料已被改動，必要時可改回。
+## 2026-09-03 補記：確認「畫面顯示 Active／Published」不保證 webhook 已註冊，且核准後續傳／重試機制端到端驗證通過
+
+**現象**：延續上一則條目，Robin 對「供應商模糊比對」複核案件按「認領案件」並確認候選供應商後，畫面顯示
+「案件已核准，但自動建立採購需求草稿失敗，可點擊「重試續傳」再試一次」；檢查「候選解析」與「通知」
+兩支 workflow，畫面上都已顯示為 Active／Published（Robin 原話：「兩個 workflow 都是 public」），
+但 n8n Executions 完全沒有留下對應的執行紀錄——不是失敗紀錄，是根本沒被呼叫到。
+
+**排查與修復**：這正是本檔案先前已記錄過的「CLI／匯入動作改資料庫欄位，不會通知已在跑的 n8n process
+重新註冊 webhook」限制的又一次重現，但這次額外確認了一個更精確的細節：**光是「畫面顯示 Active／
+Published」不足以判斷 webhook 真的已註冊**，必須實際把 Active 開關「關掉再重新打開」（不是只確認
+目前狀態是開的）才能強迫 n8n 重新註冊。請 Robin 對兩支 workflow 都執行一次關閉→重新開啟後，點擊
+「重試續傳」，候選解析 workflow 的 Executions 立即出現新的成功執行紀錄，`ManualReviewQueue` 的
+`resume_status` 轉為 `succeeded`、`created_purchase_request_id` 正確帶出新草稿 id，Robin 確認
+在申請人（原始需求發起人）的採購需求清單中看得到這筆自動建立的草稿。
+
+**結論**：FR-6a「供應商模糊比對案件核准→Django 直接重新解析→自動建立採購需求草稿」與 P5 補上的
+`retry_resume()` 重試機制，這次在真實環境完整端到端驗證通過（含核准後首次嘗試失敗、重試成功兩種
+分支都覆蓋到）。已更新 `docs/reference/demo-guide.md` 的已知限制說明，把「畫面顯示 Active 不代表
+已註冊，需要實際關閉再重新開啟」這個更精確的判斷方式補進去，避免下次只檢查畫面狀態就誤判鏈路正常。
+
+**驗證方式**：Robin 實測操作與畫面確認（申請人採購需求清單出現新草稿）。
+
+**未驗證範圍**：`resume_status=failed` 且 `retry_resume()` 仍然失敗（例如連續多次失敗）的分支這次
+沒有機會覆蓋到（本次一次重試就成功），維持既有測試覆蓋（`test_masking_service.py`／
+`test_inquiry_resume_service.py` 等單元測試層級已覆蓋此分支，未在真實環境重現過）。

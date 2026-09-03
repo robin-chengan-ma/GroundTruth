@@ -211,6 +211,24 @@ class PurchaseRequest(models.Model):
     needed_by = models.DateField(null=True, blank=True, db_comment="期望到貨日期")
     currency = models.CharField(max_length=3, default="TWD", db_comment="ISO 4217 三碼大寫幣別")
     source = models.CharField(max_length=30, default="manual", db_comment="需求來源，例如 manual/ai/legacy")
+    copied_from_review = models.ForeignKey(
+        "audit.ManualReviewQueue",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="copies",
+        db_column="copied_from_review_id",
+        db_comment="若此需求是複製自已駁回的人工複核案件重新編輯而成，記錄來源案件；用字串參照 audit app 避免與該 app 的 models.py 互相 import 造成循環依賴",
+    )
+    copied_from_request = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="copies",
+        db_column="copied_from_request_id",
+        db_comment="若此需求是複製自已駁回的採購需求重新編輯而成，記錄來源需求；同一來源只允許被複製一次，由 service 層檢查 copies 是否已存在",
+    )
     legacy_quote = models.OneToOneField(
         "Quote",
         on_delete=models.PROTECT,

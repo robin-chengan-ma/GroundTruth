@@ -90,9 +90,11 @@ export interface ManualReview {
   user: number | null
   claimant_name: string | null
   decision: string | null
+  rejection_reason: string | null
   resume_status: 'not_applicable' | 'pending' | 'succeeded' | 'failed'
   resume_error_code: string | null
   created_purchase_request: number | null
+  copied_to_request_no: string | null
   created_at: string
   updated_at: string
 }
@@ -139,6 +141,7 @@ export interface PurchaseRequestSummary {
   currency: string
   item_summary: string
   supplier_summary: string
+  rejection_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -167,6 +170,10 @@ export interface PurchaseRequestDetail {
   status: string
   currency: string
   source: string
+  rejection_reason: string | null
+  copied_from_request_no: string | null
+  copied_from_review_id: number | null
+  copied_to_request_no: string | null
   candidate_suppliers: Array<{ supplier_id: number; supplier_name: string }>
   items: Array<{
     id: number

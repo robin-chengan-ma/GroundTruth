@@ -55,6 +55,10 @@ class ManualReviewQueue(models.Model):
         help_text="認領/處理的管理員",
     )
     decision = models.CharField(max_length=20, choices=Decision.choices, null=True, blank=True)
+    rejection_reason = models.TextField(
+        null=True, blank=True,
+        help_text="決議為 rejected 時管理員填寫的駁回原因；決議當下必填，用於通知申請人與畫面顯示",
+    )
     resume_status = models.CharField(
         max_length=20, choices=ResumeStatus.choices, default=ResumeStatus.NOT_APPLICABLE,
         help_text="supplier_fuzzy_match 案件核准後續傳解析的持久化狀態，可依 failed 重試",

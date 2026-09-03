@@ -88,6 +88,29 @@ def notify_manual_review_created(review) -> bool:
     )
 
 
+def notify_manual_review_rejected(review) -> bool:
+    """人工複核案件遭駁回時通知原始申請人（Robin 2026-09-03 決策：問題三「駁回不會通知
+    申請人」修復）。supplier_fuzzy_match 案件此時尚未建立任何 PurchaseRequest（見
+    services/inquiry_resume_service.py 模組說明），收件人取自 `review.requester`；
+    hallucination_mismatch 是舊版 Quote 流程，收件人取自 `review.quote.user`。任一種
+    找不到收件人 email 時視為沒有收件人，_send_notification 會直接回傳 False，不拋例外。
+    """
+    recipient_user = review.requester
+    if recipient_user is None and review.quote_id is not None:
+        recipient_user = review.quote.user
+    recipients = [recipient_user.email] if recipient_user and recipient_user.email else []
+
+    subject = f"【詢價已駁回】案件 #{review.id} 需要您重新確認後再送出"
+    body = (
+        f"您送出的詢價（案件編號 #{review.id}）經管理員複核後遭駁回，尚未建立正式採購需求。\n\n"
+        f"駁回原因：{review.rejection_reason or '（未填寫）'}\n\n"
+        "請確認供應商全名與品項名稱是否與正式主檔一致後，重新於系統送出詢價。"
+    )
+    return _send_notification(
+        subject=subject, body=body, recipients=recipients, link=_frontend_link("/inquiry")
+    )
+
+
 def notify_approval_step_activated(step) -> bool:
     """FR-8：簽核關卡成為可認領狀態時，通知該角色底下所有使用者（廣播，非單一人），附上簽核頁面連結。"""
     recipients = _active_recipients_for_role(step.role_id)

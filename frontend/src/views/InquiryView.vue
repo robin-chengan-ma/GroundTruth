@@ -1,12 +1,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { api } from '../api/client'
 import { apiErrorMessage } from '../api/errors'
 import PageHeader from '../components/PageHeader.vue'
-import type { DraftEstimate, Paginated, ProductOption, PurchaseCandidate, PurchaseCandidateItem, PurchaseDraft, SupplierOption, SupplierProductCoverageRow } from '../types/api'
+import type { DraftEstimate, Paginated, ProductOption, PurchaseCandidate, PurchaseCandidateItem, PurchaseDraft, PurchaseRequestDetail, SupplierOption, SupplierProductCoverageRow } from '../types/api'
 import { formatMoney, formatQuantity } from '../utils/formatters'
 
-const rawText = ref('')
+const route = useRoute()
+// 從「詢價已駁回」清單的「複製並重新編輯」帶進來的來源案件（Robin 2026-09-03 決策）：
+// 只是把原始文字帶入輸入框方便編輯，實際「已複製過」的鎖定是後端在真的建立草稿時才寫入，
+// 不是這裡讀 query string 的當下。
+const copiedFromReviewId = ref<string | null>(
+  typeof route.query.copied_from_review === 'string' ? route.query.copied_from_review : null,
+)
+// 複製自已駁回採購需求（簽核階段駁回）的「複製為新草稿」：這裡只是把來源需求的內容
+// 讀出來、預先填進畫面上既有的手動編輯 UI，不會在這個當下建立任何新單據；真正的
+// PurchaseRequest 要到 saveAndEstimate() 呼叫 create_draft() 時才會建立，「只能複製
+// 一次」的鎖也是後端在那個當下才寫入（Robin 2026-09-03 決策，跟複核案件複製同一套原則）。
+const copiedFromRequestId = ref<string | null>(
+  typeof route.query.copied_from_request === 'string' ? route.query.copied_from_request : null,
+)
+
+const rawText = ref(typeof route.query.text === 'string' ? route.query.text : '')
 const loading = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -53,6 +69,37 @@ async function loadCatalogs() {
   } catch (reason) {
     error.value = apiErrorMessage(reason, '無法載入供應商與品項主檔')
   }
+}
+
+async function loadCopiedFromRequest() {
+  if (!copiedFromRequestId.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    const source = (await api.get<PurchaseRequestDetail>(`/purchase-requests/${copiedFromRequestId.value}/`)).data
+    candidate.value = {
+      purpose: source.purpose,
+      needed_by: source.needed_by,
+      currency: source.currency,
+      assistant_message: '已帶入被駁回需求的內容，請確認或修改後重新送出。',
+      supplier_candidates: source.candidate_suppliers.map((supplier) => ({ supplier_id: supplier.supplier_id, supplier_name: supplier.supplier_name })),
+      items: source.items.map((item) => ({
+        product_id: item.product_id,
+        product_name: item.product_name || item.description_snapshot,
+        quantity: item.quantity,
+        unit_of_measure: item.unit_of_measure,
+        specifications: item.specifications as Record<string, string>,
+      })),
+      missing_fields: [],
+      ready_for_draft: true,
+      candidate_token: '',
+    }
+    selectedSupplierIds.value = source.candidate_suppliers.map((supplier) => supplier.supplier_id)
+    await refreshCoverage()
+  } catch (reason) {
+    error.value = apiErrorMessage(reason, '無法載入來源需求內容，請改用原始輸入文字重新輸入')
+    copiedFromRequestId.value = null
+  } finally { loading.value = false }
 }
 
 async function parseRequirement() {
@@ -116,6 +163,8 @@ function recognizedItemSummary(item: PurchaseCandidateItem) {
 }
 async function resetToNaturalInput(message: string) {
   rawText.value = ''
+  copiedFromReviewId.value = null
+  copiedFromRequestId.value = null
   candidate.value = null
   selectedSupplierIds.value = []
   coverageRows.value = []
@@ -158,7 +207,7 @@ async function saveAndEstimate() {
   loading.value = true
   error.value = ''
   estimate.value = null
-  const payload = { purpose: candidate.value.purpose, needed_by: candidate.value.needed_by || null, currency: candidate.value.currency, supplier_ids: selectedSupplierIds.value, items: candidate.value.items.map(itemPayload), candidate_token: candidate.value.candidate_token }
+  const payload = { purpose: candidate.value.purpose, needed_by: candidate.value.needed_by || null, currency: candidate.value.currency, supplier_ids: selectedSupplierIds.value, items: candidate.value.items.map(itemPayload), candidate_token: candidate.value.candidate_token, copied_from_review_id: copiedFromReviewId.value, copied_from_request_id: copiedFromRequestId.value }
   try {
     if (draft.value) {
       const response = await api.patch<PurchaseDraft>(`/purchase-request-drafts/${draft.value.id}/`, { ...payload, version: draft.value.version })
@@ -182,6 +231,8 @@ async function submitDraft() {
   try {
     const response = await api.post<{ request_no: string }>(`/purchase-request-drafts/${draft.value.id}/submit/`, { version: draft.value.version, idempotency_key: crypto.randomUUID() })
     rawText.value = ''
+    copiedFromReviewId.value = null
+    copiedFromRequestId.value = null
     candidate.value = null
     selectedSupplierIds.value = []
     coverageRows.value = []
@@ -196,6 +247,7 @@ async function submitDraft() {
   } finally { loading.value = false }
 }
 onMounted(loadCatalogs)
+onMounted(loadCopiedFromRequest)
 onBeforeUnmount(() => {
   if (successTimer) clearTimeout(successTimer)
   if (resetTimer) clearTimeout(resetTimer)

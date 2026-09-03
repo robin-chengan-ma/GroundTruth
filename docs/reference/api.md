@@ -69,7 +69,7 @@ rotation／撤銷狀態，不保存 Token 明文。
 | quote-requirement-results | 採購人員於報價提交後讀取評估結果 | 只有 `requirement.waive` 可對 fail／not_provided 填理由例外核准 |
 | goods-receipts | 申請人只見自己需求；`receipt.record`、`inspection.decide`、`audit.read` 可見全部 | 只有 `receipt.record` 可建立草稿與送驗；不開放通用更新／刪除 |
 | inspection-variances | `purchase_order.manage`、`receipt.record`、`inspection.decide`、`audit.read` 可唯讀全部 | 只有 `purchase_order.manage` 可建立、修改／刪除草稿與送出；正式案件不可以通用 CRUD 改寫 |
-| manual-review-queue | 具 `manual_review.decide`（含 list／retrieve；未套用 `admin` 角色字串判斷） | list／retrieve 為標準 DRF `PageNumberPagination`（`count／next／previous／results`，`?page=`），與下方共用分頁信封不同；`claim`／`decide`／`retry-resume` 見對應章節 |
+| manual-review-queue | 具 `manual_review.decide`（含 list／retrieve；未套用 `admin` 角色字串判斷）；`mine` 例外，只需 `purchase_request.read_own`（申請人查自己的案件） | list／retrieve 為標準 DRF `PageNumberPagination`（`count／next／previous／results`，`?page=`），與下方共用分頁信封不同；`mine` 改用共用分頁信封（`{count,page,page_size,total_pages,results}`，見獨立章節）；`claim`／`decide`／`retry-resume` 見對應章節 |
 | audit-logs | 具 `audit.read` | 唯讀；同樣是標準 DRF `PageNumberPagination`（`count／next／previous／results`），不是下方共用分頁信封 |
 | audit-dashboard/stats | 具 `audit.read` | 統計總覽，非清單端點，不分頁 |
 
@@ -875,6 +875,46 @@ X-Internal-Api-Key: <INTERNAL_API_KEY>
 
 **Response（410）**：同 `inquiries/trigger/` 的 `legacy_command_retired` 回應；Request Body 不再解析。
 
+## GET /api/v1/manual-review-queue/mine/
+
+列出目前登入者自己被駁回、且因駁回當下尚未建立 `PurchaseRequest` 而不會出現在
+「我的採購需求」正式清單裡的 `supplier_fuzzy_match` 案件（只回自己送出的，不含其他人的案件；
+`hallucination_mismatch` 是已退役的舊版流程，不在此列）。權限只需 `purchase_request.read_own`，
+不需要人工複核權限——供獨立頁面「詢價已駁回清單」（`/rejected-inquiries`）使用（2026-09-03 決策，
+見 `docs/ADR/discuss/phase7-integration.md`）。
+
+依 `updated_at` 新到舊排序（駁回/決議當下即為最新更新時間），並套用與 `/purchase-requests/`
+相同的共用分頁信封，非標準 DRF `PageNumberPagination`。
+
+**Query Parameters**
+- `page`：選填，預設 1。
+- `page_size`：選填，限定 `10`／`20`／`50`，預設 20；不在此範圍回 400 `invalid_pagination`。
+
+**Response（200）**
+```json
+{
+  "count": 3,
+  "page": 1,
+  "page_size": 20,
+  "total_pages": 1,
+  "results": [
+    {
+      "id": 12,
+      "raw_input_text": "大和物流 2 個筆電",
+      "rejection_reason": "供應商全名比對不到，請確認正式全名後重新送出",
+      "copied_to_request_no": null,
+      "updated_at": "2026-09-03T08:00:00Z"
+    }
+  ]
+}
+```
+
+**Response（401）**：未登入。
+
+**Response（403）**：無 `purchase_request.read_own` 權限。
+
+**Response（400）**：`page`／`page_size` 非法，`code: "invalid_pagination"`。
+
 ## POST /api/v1/manual-review-queue/{id}/claim/
 
 FR-6b：登入的管理員認領複核案件，避免多人同時處理同一案件；身分固定取自 JWT。
@@ -900,6 +940,12 @@ FR-6a／FR-6c：決議案件（核准／駁回），僅提供 SPEC 定義的有�
 ```json
 { "decision": "approved", "supplier_id": 7 }
 ```
+`decision="rejected"` 時 `reason` 為必填（2026-09-03 新增，見 `docs/ADR/discuss/phase7-integration.md`），
+寫入 `manual_review_queue.rejection_reason` 並觸發 `notify_manual_review_rejected()` 通知申請人：
+```json
+{ "decision": "rejected", "reason": "供應商全名比對不到，請確認正式全名後重新送出" }
+```
+未填寫（空字串或缺漏）回 400，訊息「駁回時必須填寫駁回原因」。
 
 **`hallucination_mismatch` 案件已全面退役**：`_ensure_active_review()` 一律拋出 `LegacyManualReviewRetiredError`（API 回 410 `legacy_command_retired`），核准／駁回都不會執行；`services/quote_summary_template.py` 這個舊版樣板檔案已刪除，不再有任何程式碼引用。此類案件僅供歷史查閱，不能再決議。
 **核准（`supplier_fuzzy_match`）**（2026-09-02 改版，見 `docs/ADR/debug/phase5-security.md`）：確認 `manual_review_queue.supplier_id`；DB 交易確定提交（含把 `resume_status` 先落地為 `pending`）後，Django 直接在內部重新解析原始需求，不再交還 n8n 續傳 webhook（該路徑舊版會打進已退役的 `quotes/calculate/`／`quotes/verify-hallucination/`，核准後實際上無法完成）。流程：用已確認的供應商全名重新遮罩原始輸入（`mask_confirmed_supplier_text`，不重新跑模糊比對；找不到可定位的供應商片段時 fail-closed 中止，不會把真實供應商名稱未遮罩送往外部 LLM）→ 呼叫既有的候選解析 n8n webhook（與 `POST /api/v1/inquiries/parse/` 共用同一個端點；此端點仍是必要的外部 AI 呼叫，「略過 n8n」指的是不再由 n8n 負責續傳編排本身，不是不需要任何 n8n／LLM 呼叫）解析品項 → 解析成功且無缺漏欄位時，自動建立一筆 `PurchaseRequest` 草稿（`source="manual_review_resume"`，`requester` 為原始詢價發起人），可在「我的採購需求」看到並自行編輯提交。解析失敗（AI 服務連線失敗、格式錯誤、無法安全定位供應商名稱）、仍有缺漏欄位、或發起人沒有 `purchase_request.create` 權限等情況，不建立草稿——決議本身仍然成功，只是需要人工確認後續（不影響這支 API 本身的核准結果，DB 裡供應商已確認的事實不因此回滾）。**續傳結果落地保存**（2026-09-02 新增，見 `docs/ADR/discuss/main-flow.md`「持久化續傳狀態與重試」條目、Migration `audit/0004_manualreviewqueue_created_purchase_request_and_more`）：成功／失敗都寫回 `manual_review_queue.resume_status`／`resume_error_code`／`created_purchase_request_id`，失敗時可呼叫 `POST /api/v1/manual-review-queue/{id}/retry-resume/` 重試，不需要整個案件重新走一次核准流程。

@@ -2,6 +2,8 @@ from rest_framework import serializers
 
 from apps.procurement.models import (
     Approval,
+    ApprovalCase,
+    ApprovalStep,
     PurchaseRequest,
     PurchaseRequestItem,
     Quote,
@@ -12,6 +14,29 @@ from apps.procurement.models import (
     SupplierQuote,
     SupplierQuoteItem,
 )
+
+
+def _purchase_request_rejection_reason(request):
+    """簽核階段駁回時的駁回理由（Robin 2026-09-03 決策：「我的採購需求」頁面備註欄）。
+    只有走到簽核關卡才可能有 ApprovalCase／ApprovalStep，草稿或詢價中階段一律回傳
+    None；`decision_reason` 在 `services/approval_case_service.decide_step()` 駁回時已是
+    必填欄位，這裡單純把既有資料序列化出來，不是新的業務邏輯。"""
+    if request.status != PurchaseRequest.Status.REJECTED:
+        return None
+    for rfq in request.rfqs.all():
+        for award in rfq.award_decisions.all():
+            try:
+                case = award.approval_case
+            except ApprovalCase.DoesNotExist:
+                continue
+            step = (
+                case.steps.filter(status=ApprovalStep.Status.REJECTED)
+                .order_by("-decided_at")
+                .first()
+            )
+            if step and step.decision_reason:
+                return step.decision_reason
+    return None
 
 
 class SupplierPriceVersionSerializer(serializers.ModelSerializer):
@@ -122,13 +147,17 @@ class PurchaseRequestListSerializer(serializers.ModelSerializer):
     requester_name = serializers.CharField(source="requester.name", read_only=True)
     item_summary = serializers.SerializerMethodField()
     supplier_summary = serializers.SerializerMethodField()
+    rejection_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseRequest
         fields = [
             "id", "request_no", "purpose", "requester_name", "status", "currency",
-            "item_summary", "supplier_summary", "created_at", "updated_at",
+            "item_summary", "supplier_summary", "rejection_reason", "created_at", "updated_at",
         ]
+
+    def get_rejection_reason(self, obj):
+        return _purchase_request_rejection_reason(obj)
 
     def get_item_summary(self, obj):
         items = list(obj.items.all())
@@ -152,6 +181,10 @@ class PurchaseRequestDetailSerializer(serializers.ModelSerializer):
     requester_name = serializers.CharField(source="requester.name", read_only=True)
     items = PurchaseRequestItemSerializer(many=True, read_only=True)
     candidate_suppliers = serializers.SerializerMethodField()
+    rejection_reason = serializers.SerializerMethodField()
+    copied_from_request_no = serializers.CharField(source="copied_from_request.request_no", read_only=True, default=None)
+    copied_from_review_id = serializers.IntegerField(read_only=True, default=None)
+    copied_to_request_no = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseRequest
@@ -166,9 +199,22 @@ class PurchaseRequestDetailSerializer(serializers.ModelSerializer):
             "requester_name",
             "items",
             "candidate_suppliers",
+            "rejection_reason",
+            "copied_from_request_no",
+            "copied_from_review_id",
+            "copied_to_request_no",
             "created_at",
             "updated_at",
         ]
+
+    def get_rejection_reason(self, obj):
+        return _purchase_request_rejection_reason(obj)
+
+    def get_copied_to_request_no(self, obj):
+        """此需求是否已經被複製成新草稿（Robin 2026-09-03 決策：同一來源只能複製一次，
+        前端靠這個欄位判斷「複製為新草稿」按鈕要不要顯示，或改顯示已複製到哪一筆）。"""
+        copy = obj.copies.first()
+        return copy.request_no if copy else None
 
     def get_candidate_suppliers(self, obj):
         suppliers = {}

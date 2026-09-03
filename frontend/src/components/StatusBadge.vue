@@ -22,6 +22,14 @@ const labels: Record<string, string> = {
   partially_received: '部分收貨',
   completed: '已完成',
   withdrawn: '已撤回',
+  active: '啟用中',
+  on_hold: '暫停合作',
+  blocked: '已封鎖',
+  priority: '優先供應商',
+  normal: '一般',
+  watch: '觀察中',
+  qualified: '合格',
+  conditional: '有條件合格',
 }
 </script>
 
