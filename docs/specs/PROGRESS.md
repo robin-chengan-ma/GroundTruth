@@ -177,6 +177,7 @@ updated: 2026-09-03
 | 2026-09-03 | b50f6b5 | fix(phase7)：修復一鍵啟動建置問題（frontend Dockerfile Node 版本／漏 COPY pnpm-workspace.yaml）並補上 n8n webhook（notify／purchase-request-candidate）身分驗證缺口，`init-workflows.sh` 換用 `publish:workflow` | Claude／Robin |
 | 2026-09-03 | ee12ce9 | fix(n8n)：材質擷取修復、補 demo 帳號與驗收記錄（few-shot 範例修復 gemini-3.5-flash-lite 材質擷取／品項比對失敗，新增「多供應商、多品項解析」「LLM 敏感資料遮罩」驗收矩陣紀錄，補 henry demo 帳號） | Claude／Robin |
 | 2026-09-03 | fb7a035 | feat(phase7)：人工複核駁回通知、已駁回案件複製重編與獨立清單頁（①駁回原因必填＋通知申請人；②已駁回案件「複製並重新編輯」，一次性複製追蹤，migration 0012；③「詢價已駁回清單」獨立成頁，`/manual-review-queue/mine/` 排序改新到舊並補分頁；④側邊選單字體、下拉選單中文化、稽核紀錄排序等介面小修正；⑤補記 n8n「通知」workflow 每次重啟被重置回未啟用、「畫面顯示 Active 不保證已註冊」兩則排查發現） | Claude／Robin |
+| 2026-09-03 | bbc415a | docs：README.md 補上「n8n 連線方式」章節（編輯畫面網址與首次自建 Owner 帳號、Django／n8n 容器互連方式、兩支 webhook 端點與 `X-Internal-Api-Key` 驗證、Health Check，並提醒 Gmail OAuth 需手動授權、Active 開關可能需手動關閉重開兩個既有限制） | Claude |
 | YYYY-MM-DD | | | Claude / Codex / <負責人> |
 
 ## Push／部署狀態
