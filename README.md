@@ -66,6 +66,20 @@ docker compose up --build
 流程；Gmail 通知需要另外手動完成一次 Google 帳號 OAuth 授權才會啟用（無法自動化）。啟動完成後開啟
 <http://localhost:5173>。
 
+## n8n 連線方式
+
+| 項目 | 說明 |
+| --- | --- |
+| 編輯畫面 | 啟動後開啟 <http://localhost:5678>；首次開啟 n8n 會要求自行建立一組 Owner 帳號（信箱＋密碼），這是 n8n 本身的機制，跟本專案 Vue 前端的登入帳號無關 |
+| Django ↔ n8n | 兩者在同一個 Docker Compose 網路內，以 service 名稱互連（`http://n8n:5678`），不是 `host.docker.internal`；n8n 呼叫回 Django 用 `http://backend:8000` |
+| Webhook 端點 | `POST /webhook/purchase-request-candidate`（AI 候選解析）、`POST /webhook/notify`（Gmail 通知），皆須帶 `X-Internal-Api-Key` header，值須與 `.env` 的 `INTERNAL_API_KEY` 一致，否則回 401 |
+| Health Check | `GET http://localhost:5678/healthz`（或 `/healthz/readiness`，Docker Compose 用這個判斷 n8n 是否已可開始匯入 workflow） |
+
+容器啟動時已自動匯入「AI 候選解析」與「Gmail 通知」兩支 workflow，並嘗試自動啟用前者，但有兩個已知限制：
+
+- Gmail 通知需要在「寄送 Gmail」節點手動完成一次 Google 帳號 OAuth 授權才會真的能寄信，這步驟無法自動化。
+- 畫面顯示 workflow 為 Active／Published，不保證 webhook 真的已註冊生效；若怎麼觸發都沒有對應的 n8n Execution 紀錄，到 n8n 畫面把該 workflow 的 Active 開關關閉再重新打開一次即可修復，細節見 [`docs/reference/deploy.md`](docs/reference/deploy.md) 與 [`docs/ADR/debug/phase7-integration.md`](docs/ADR/debug/phase7-integration.md)。
+
 ## 文件索引
 
 專案採 Spec-Driven Development，開發準則見 [`AGENTS.md`](AGENTS.md)。
