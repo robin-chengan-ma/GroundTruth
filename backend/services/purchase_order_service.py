@@ -121,8 +121,13 @@ def create_purchase_orders_for_award(award, actor):
 
 
 def list_accessible_purchase_orders(user, *, search=None, status=None):
+    """收貨（receipt.record）與品質驗收（inspection.decide）人員需要看到已發出的
+    採購單才能建立收貨單／執行驗收，比照 goods_receipt_service 的讀取權限規則
+    開放（2026-09-10 修復，見 docs/ADR/debug/purchase-order-visibility.md）。"""
     permissions = get_permission_codes(user)
-    can_read_all = bool({"purchase_order.manage", "audit.read"} & permissions)
+    can_read_all = bool(
+        {"purchase_order.manage", "audit.read", "receipt.record", "inspection.decide"} & permissions
+    )
     if not can_read_all and "purchase_request.read_own" not in permissions:
         raise PurchaseOrderPermissionDenied("沒有讀取採購單的權限")
     return PurchaseOrderRepository.accessible(

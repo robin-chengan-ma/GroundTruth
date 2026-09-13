@@ -1,6 +1,6 @@
 ---
 title: API Reference
-updated: 2026-09-03
+updated: 2026-09-10
 ---
 
 # API Reference
@@ -524,7 +524,7 @@ API，目前尚未提供修改既有版本 `valid_until` 的獨立 command，屬
 
 ### GET `/api/v1/purchase-orders/`
 
-**認證／權限**：Bearer Access Token。具 `purchase_request.read_own` 者只能查看自己需求產生的 PO；具 `purchase_order.manage` 或 `audit.read` 者可唯讀查看全部。其他使用者回 403。
+**認證／權限**：Bearer Access Token。具 `purchase_request.read_own` 者只能查看自己需求產生的 PO；具 `purchase_order.manage`、`audit.read`、`receipt.record` 或 `inspection.decide` 者可唯讀查看全部（2026-09-10 修復，收貨／驗收人員需要看到已發出的採購單才能作業，見 `docs/ADR/debug/purchase-order-visibility.md`）。其他使用者回 403。
 
 **Query Parameters**：`page`／`page_size`／`?search=<PO 單號、供應商名稱或 RFQ 編號>`／`?status=<draft\|issued\|partially_received\|received\|closed\|cancelled>`（見上方 Phase 6 分頁慣例，皆選填）。
 

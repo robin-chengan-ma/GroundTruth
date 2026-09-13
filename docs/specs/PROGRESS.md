@@ -1,5 +1,5 @@
 ---
-updated: 2026-09-03
+updated: 2026-09-10
 ---
 
 # 開發進度
@@ -140,6 +140,8 @@ updated: 2026-09-03
 | 2026-09-03 | 「詢價已駁回」獨立成頁（Robin 決策，見 `docs/ADR/discuss/phase7-integration.md` 同日第三則條目） | 把原本塞在「我的採購需求」最上方的「詢價已駁回（尚未建立採購需求）」區塊移到獨立頁面 `/rejected-inquiries`，「工作台」選單新增子選單「詢價已駁回清單」（權限比照「我的採購需求」`purchase_request.read_own`）；`GET /manual-review-queue/mine/` 順帶修正兩個原本不適合獨立成頁的缺口：排序由 `.order_by("id")`（舊到新）改為依駁回/更新時間 `.order_by("-updated_at")`（新到舊），並由裸陣列改套用既有 `paginate_response()` 分頁信封（`{count,page,page_size,total_pages,results}`）；功能維持原區塊的原始輸入內容／駁回原因／駁回時間／「複製並重新編輯」，不提供狀態下拉篩選 | Claude | 程式碼完成，通過 `vue-tsc --noEmit` 與 Python 語法檢查；**待 Robin 實測** | 新增 `frontend/src/views/RejectedInquiryListView.vue`；`PurchaseRequestListView.vue` 移除該區塊與 `rejectedInquiries`／`loadRejectedInquiries` 邏輯，回歸單純的採購需求清單；`docs/reference/api.md` 已同步 `/manual-review-queue/mine/` 新回應形狀與權限說明，並補上先前遺漏的 `decide` 端點 `reason` 欄位文件（rejection_reason 必填，屬前一項工作項目遺留的文件缺口，一併補齊） |
 
 | 2026-09-03 | 文件治理（非 FR，Robin 要求） | 根目錄 README.md 補上「n8n 連線方式」章節 | Claude | 完成 | Robin 指出 README 缺 n8n 連線方式說明。新增小節：n8n 編輯畫面網址與首次開啟需自建 Owner 帳號（n8n 本身機制，與本專案登入帳號無關）、Django／n8n 容器間以 service 名稱互連、兩支 webhook 端點與 `X-Internal-Api-Key` 驗證、Health Check 端點，並提醒 Gmail OAuth 需手動授權、Active 開關可能需要手動關閉重開兩個既有限制（皆已記錄於 `docs/reference/deploy.md`，本次只是把 已定案的現況同步進 README 索引層級，不是新決策）。不影響任何程式邏輯，無新測試 |
+
+| 2026-09-10 | Bug 修復（非 FR，Robin 實測發現） | 收貨人員（receiver）看不到已發出的採購單，無法建立收貨單 | Claude | 程式碼完成；`py_compile` 通過；**待 Robin 執行 pytest 與畫面重測** | `backend/services/purchase_order_service.py` 的 `list_accessible_purchase_orders()` 漏把 `receipt.record`／`inspection.decide` 納入可唯讀全部採購單的權限，與同流程 `goods_receipt_service`／`inspection_variance_service` 的既有規則不一致，導致 Frank（receiver）呼叫 `/purchase-orders/` 一律 403，前端又把錯誤吞掉顯示空清單。修復後兩角色可唯讀查看全部採購單；已同步 `docs/reference/api.md` 權限說明，詳見 `docs/ADR/debug/purchase-order-visibility.md`；純修復既有角色應有的讀取能力，非新產品決策，不需 discuss ADR |
 
 ## 已知待補（非本次 Phase 範圍，記錄避免遺漏）
 
